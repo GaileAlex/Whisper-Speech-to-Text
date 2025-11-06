@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Whisper – Распознавание речи</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        input, select, button {
+            margin-top: 10px;
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover { background: #0056b3; }
+        pre {
+            background: #fff;
+            padding: 10px;
+            border-radius: 8px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+<h2>🎙 Whisper: Распознавание речи из видео или аудио</h2>
+
+<form id="uploadForm">
+    <label>Выберите файл (MP4, MP3, WAV и т.д.):</label>
+    <input type="file" name="file" accept=".mp4,.mp3,.wav,.m4a" required>
+
+    <label>Язык (опционально):</label>
+    <select name="lang">
+        <option value="">Автоопределение</option>
+        <option value="en-US">Английский</option>
+        <option value="et-EE">Эстонский</option>
+        <option value="ru-RU">Русский</option>
+    </select>
+
+    <button type="submit">Отправить</button>
+</form>
+
+<h3>Результат:</h3>
+<pre id="result">–</pre>
+
+<script>
+    const form = document.getElementById('uploadForm');
+    const resultBox = document.getElementById('result');
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(form);
+
+        resultBox.textContent = "⏳ Распознавание...";
+
+        try {
+            const response = await fetch('http://localhost:8395/transcribe', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) throw new Error("Ошибка при отправке файла");
+            const data = await response.json();
+
+            resultBox.textContent = data.text || JSON.stringify(data, null, 2);
+        } catch (err) {
+            resultBox.textContent = "❌ " + err.message;
+        }
+    });
+</script>
+</body>
+</html>
