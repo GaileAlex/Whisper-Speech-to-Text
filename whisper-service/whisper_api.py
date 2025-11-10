@@ -13,7 +13,7 @@ def transcribe():
         return jsonify({"error": "no file"}), 400
 
     file = request.files["file"]
-    language = request.form.get("language")  # например "en"
+    language = request.form.get("language")
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
         file.save(tmp.name)
@@ -27,7 +27,7 @@ def transcribe():
 
         return jsonify({
             "text": result["text"],
-            "language": result.get("language")  # Whisper возвращает определённый язык
+            "language": result.get("language")
         })
     finally:
         os.remove(tmp_path)
