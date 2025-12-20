@@ -3,10 +3,31 @@ import tempfile
 import os
 import torch
 import whisper
+import threading
+import time
 
 app = Flask(__name__)
 
 model = whisper.load_model("medium", device="cpu")
+
+unload_delay = 600
+unload_timer = None
+lock = threading.Lock()
+
+def schedule_unload():
+    global unload_timer
+    with lock:
+        if unload_timer:
+            unload_timer.cancel()
+        unload_timer = threading.Timer(unload_delay, unload_model)
+        unload_timer.start()
+
+def unload_model():
+    global unload_timer
+    with lock:
+        model.to("cpu")
+        torch.cuda.empty_cache()
+        unload_timer = None
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
@@ -25,14 +46,13 @@ def transcribe():
 
         result = model.transcribe(tmp_path, language=language)
 
+        schedule_unload()
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
     finally:
         os.remove(tmp_path)
-
-        model.to("cpu")
-        torch.cuda.empty_cache()
 
     return jsonify({
         "text": result["text"],
