@@ -8,7 +8,7 @@ import time
 
 app = Flask(__name__)
 
-model = whisper.load_model("medium", device="cpu")
+model = whisper.load_model("large", device="cpu") # large, medium, small, tiny
 
 unload_delay = 600
 unload_timer = None
