@@ -33,6 +33,9 @@ public class WhisperService {
         if (selectedLang.equals("et-EE")) {
             selectedLang = "et";
         }
+        if (selectedLang.equals("ru-RU")) {
+            selectedLang = "ru";
+        }
 
         bodyBuilder.part("file", file.getResource());
         bodyBuilder.part("language", selectedLang);
