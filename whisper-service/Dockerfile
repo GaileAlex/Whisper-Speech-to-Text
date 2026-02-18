@@ -1,23 +1,28 @@
-FROM nvidia/cuda:12.3.2-runtime-ubuntu22.04
+# CUDA 11.8 runtime с Ubuntu 22.04
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-
+# Устанавливаем Python и утилиты
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip ffmpeg git && \
+    python3.10 python3-pip python3-venv \
+    ffmpeg git curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-RUN pip install --upgrade pip
+# Обновляем pip
+RUN pip3 install --upgrade pip
 
-# PyTorch под CUDA 12.3
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+# Ставим PyTorch с поддержкой CUDA 11.8
+RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
-# faster-whisper + сервер
-RUN pip install faster-whisper flask gunicorn
+# Ставим Whisper и Flask
+RUN pip3 install git+https://github.com/openai/whisper.git flask
 
+# Копируем Flask-приложение
 COPY whisper_api.py .
 
+# Открываем порт
 EXPOSE 5001
 
-CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5001", "whisper_api:app"]
+# Запуск приложения
+CMD ["python3", "whisper_api.py"]
