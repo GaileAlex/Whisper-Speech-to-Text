@@ -1,33 +1,18 @@
 from flask import Flask, request, jsonify
+from faster_whisper import WhisperModel
 import tempfile
 import os
 import torch
-import whisper
-import threading
-import time
 
 app = Flask(__name__)
 
-model = whisper.load_model("large", device="cpu") # large, medium, small, tiny
+MODEL_SIZE = "large-v3"
+COMPUTE_TYPE = "float16"
 
-unload_delay = 600
-unload_timer = None
-lock = threading.Lock()
-
-def schedule_unload():
-    global unload_timer
-    with lock:
-        if unload_timer:
-            unload_timer.cancel()
-        unload_timer = threading.Timer(unload_delay, unload_model)
-        unload_timer.start()
-
-def unload_model():
-    global unload_timer
-    with lock:
-        model.to("cpu")
-        torch.cuda.empty_cache()
-        unload_timer = None
+# Загружаем модель сразу при старте контейнера
+print("Starting container, loading model...")
+model = WhisperModel(MODEL_SIZE, device="cuda", compute_type=COMPUTE_TYPE)
+print("Model ready!")
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
@@ -42,11 +27,13 @@ def transcribe():
         tmp_path = tmp.name
 
     try:
-        model.to("cuda")
+        segments, info = model.transcribe(
+            tmp_path,
+            language=language,
+            beam_size=5
+        )
 
-        result = model.transcribe(tmp_path, language=language)
-
-        schedule_unload()
+        text = " ".join([segment.text for segment in segments])
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -55,10 +42,6 @@ def transcribe():
         os.remove(tmp_path)
 
     return jsonify({
-        "text": result["text"],
-        "language": result.get("language")
+        "text": text,
+        "language": info.language
     })
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001)
