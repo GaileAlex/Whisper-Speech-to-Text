@@ -46,33 +46,35 @@ public class WhisperService {
                 .bodyValue(bodyBuilder.build())
                 .retrieve()
                 .bodyToMono(Map.class)
-                .timeout(Duration.ofMinutes(1));
+                .timeout(Duration.ofMinutes(5));
     }
 
     public Mono<Map<String, Object>> whisperTranscribe(MultipartFile file, String lang) {
-        return Mono.create(sink -> {
-            try (InputStream audioStream = file.getInputStream()) {
+        return Mono.fromCallable(file::getInputStream)
+                .flatMapMany(stream -> {
 
-                List<String> chunkTexts = new ArrayList<>();
-                int chunkSize = 100_000_000;
-                byte[] buffer = new byte[chunkSize];
-                int read;
+                    int chunkSize = 10_000_000;
+                    byte[] buffer = new byte[chunkSize];
 
-                while ((read = audioStream.read(buffer)) != -1) {
-                    byte[] chunk = Arrays.copyOf(buffer, read);
-                    Map<String, Object> response = sendChunk(chunk, lang).block();
-                    if (response != null && response.get("text") != null) {
-                        chunkTexts.add(response.get("text").toString());
-                    }
-                }
-
-                String finalText = String.join("\n", chunkTexts);
-                sink.success(Map.of("text", finalText));
-
-            } catch (Exception e) {
-                sink.error(e);
-            }
-        });
+                    return reactor.core.publisher.Flux.generate(() -> stream, (s, sink) -> {
+                        try {
+                            int read = s.read(buffer);
+                            if (read == -1) {
+                                sink.complete();
+                            } else {
+                                sink.next(Arrays.copyOf(buffer, read));
+                            }
+                        } catch (Exception e) {
+                            sink.error(e);
+                        }
+                        return s;
+                    });
+                })
+                .cast(byte[].class)
+                .concatMap(chunk -> sendChunk(chunk, lang))
+                .map(resp -> resp.get("text").toString())
+                .collectList()
+                .map(list -> Map.of("text", String.join("\n", list)));
     }
 
     private Mono<Map> sendChunk(byte[] audioBytes, String lang) {
