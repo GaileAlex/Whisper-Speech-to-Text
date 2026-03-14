@@ -67,7 +67,7 @@
         resultBox.textContent = "⏳ Распознавание...";
 
         try {
-            const response = await fetch('http://localhost:8395/transcribe', {
+            const response = await fetch('http://localhost:8389/transcribe', {
                 method: 'POST',
                 body: formData
             });
