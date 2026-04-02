@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.3.2-runtime-ubuntu22.04
+FROM nvidia/cuda:12.5.0-runtime-ubuntu22.04
 
 RUN apt-get update && apt-get install -y \
     python3 python3-pip ffmpeg && \
@@ -9,7 +9,7 @@ WORKDIR /app
 RUN pip3 install --upgrade pip
 
 # CUDA PyTorch
-RUN pip3 install torch --index-url https://download.pytorch.org/whl/cu121
+RUN pip3 install torch --index-url https://download.pytorch.org/whl/cu128
 
 # faster whisper + gunicorn
 RUN pip3 install faster-whisper flask gunicorn
