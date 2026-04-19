@@ -2,26 +2,63 @@ from flask import Flask, request, jsonify
 import tempfile
 import os
 import time
+import threading
+import torch
 from faster_whisper import WhisperModel
 
 app = Flask(__name__)
 
 MODEL_NAME = "large-v3"
-DEVICE = "auto"
+DEVICE = "cuda"
 COMPUTE_TYPE = "int8_float16"
 
-print("🚀 Loading Whisper model (once)...")
+IDLE_TIMEOUT = 30 * 60
 
-model = WhisperModel(
-    MODEL_NAME,
-    device=DEVICE,
-    compute_type=COMPUTE_TYPE
-)
+model = None
+last_used = time.time()
+lock = threading.Lock()
 
-print("✅ Model loaded")
+print("🚀 Whisper service starting...")
+
+
+def load_model():
+    global model
+    if model is None:
+        print("🚀 Loading Whisper model into GPU...")
+        model = WhisperModel(
+            MODEL_NAME,
+            device=DEVICE,
+            compute_type=COMPUTE_TYPE
+        )
+        print("✅ Model loaded")
+
+
+def unload_model():
+    global model
+    if model is not None:
+        print("🧹 Unloading Whisper model from GPU...")
+        del model
+        model = None
+        torch.cuda.empty_cache()
+        print("✅ GPU memory freed")
+
+
+def watchdog():
+    global last_used
+    while True:
+        time.sleep(60)
+        if model is not None:
+            if time.time() - last_used > IDLE_TIMEOUT:
+                unload_model()
+
+
+threading.Thread(target=watchdog, daemon=True).start()
+
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
+    global last_used
+
     if "file" not in request.files:
         return jsonify({"error": "no file"}), 400
 
@@ -33,30 +70,35 @@ def transcribe():
         tmp_path = tmp.name
 
     try:
-        start_time = time.time()
+        with lock:
+            load_model()
+            last_used = time.time()
 
-        segments, info = model.transcribe(
-            tmp_path,
-            language=language,
-            beam_size=1
-        )
+            start_time = time.time()
+
+            segments, info = model.transcribe(
+                tmp_path,
+                language=language,
+                beam_size=1
+            )
 
         text = "".join([seg.text for seg in segments])
 
         elapsed = time.time() - start_time
         print(f"🧠 Done in {elapsed:.2f}s")
 
+        return jsonify({
+            "text": text,
+            "language": info.language
+        })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
     finally:
-        os.remove(tmp_path)
-
-    return jsonify({
-        "text": text,
-        "language": info.language
-    })
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001)
+    app.run(host="0.0.0.0", port=5001, threaded=True)

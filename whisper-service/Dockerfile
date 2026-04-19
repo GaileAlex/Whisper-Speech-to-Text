@@ -20,4 +20,4 @@ COPY whisper_api.py .
 
 EXPOSE 5001
 
-CMD ["gunicorn", "-w", "1", "--threads", "4", "-b", "0.0.0.0:5001", "whisper_api:app"]
+CMD ["gunicorn", "-w", "1", "--threads", "1", "-b", "0.0.0.0:5001", "whisper_api:app"]
