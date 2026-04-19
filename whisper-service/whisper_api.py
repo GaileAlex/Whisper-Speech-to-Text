@@ -2,14 +2,23 @@ from flask import Flask, request, jsonify
 import tempfile
 import os
 import time
-import torch
 from faster_whisper import WhisperModel
 
 app = Flask(__name__)
 
 MODEL_NAME = "large-v3"
-DEVICE = "cuda"
-COMPUTE_TYPE = "float16"
+DEVICE = "auto"
+COMPUTE_TYPE = "int8_float16"
+
+print("🚀 Loading Whisper model (once)...")
+
+model = WhisperModel(
+    MODEL_NAME,
+    device=DEVICE,
+    compute_type=COMPUTE_TYPE
+)
+
+print("✅ Model loaded")
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
@@ -26,15 +35,6 @@ def transcribe():
     try:
         start_time = time.time()
 
-        torch.cuda.empty_cache()
-
-        print("🔄 Loading Whisper to GPU...")
-        model = WhisperModel(
-            MODEL_NAME,
-            device=DEVICE,
-            compute_type=COMPUTE_TYPE
-        )
-
         segments, info = model.transcribe(
             tmp_path,
             language=language,
@@ -42,9 +42,6 @@ def transcribe():
         )
 
         text = "".join([seg.text for seg in segments])
-
-        del model
-        torch.cuda.empty_cache()
 
         elapsed = time.time() - start_time
         print(f"🧠 Done in {elapsed:.2f}s")
