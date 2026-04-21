@@ -27,18 +27,11 @@ public class WhisperService {
 
     public Mono<Map> whisperTranscribe(String selectedLang, MultipartFile file) {
         MultipartBodyBuilder bodyBuilder = new MultipartBodyBuilder();
-        if (selectedLang.equals("en-US")) {
-            selectedLang = "en";
-        }
         if (selectedLang.equals("et-EE")) {
-            selectedLang = "et";
-        }
-        if (selectedLang.equals("ru-RU")) {
-            selectedLang = "ru";
+            bodyBuilder.part("language", "et");
         }
 
         bodyBuilder.part("file", file.getResource());
-      //  bodyBuilder.part("language", selectedLang);
 
         return whisperClient.post()
                 .uri("/transcribe")
