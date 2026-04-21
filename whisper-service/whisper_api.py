@@ -79,7 +79,11 @@ def transcribe():
             segments, info = model.transcribe(
                 tmp_path,
                 language=language,
-                beam_size=1
+                task="transcribe",
+                beam_size=5,
+                temperature=0.0,
+                vad_filter=True,
+                condition_on_previous_text=True
             )
 
         text = "".join([seg.text for seg in segments])

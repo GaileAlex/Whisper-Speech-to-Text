@@ -38,7 +38,7 @@ public class WhisperService {
         }
 
         bodyBuilder.part("file", file.getResource());
-        bodyBuilder.part("language", selectedLang);
+      //  bodyBuilder.part("language", selectedLang);
 
         return whisperClient.post()
                 .uri("/transcribe")
