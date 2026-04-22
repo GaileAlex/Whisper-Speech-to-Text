@@ -9,11 +9,8 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import java.io.InputStream;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -27,11 +24,24 @@ public class WhisperService {
 
     public Mono<Map> whisperTranscribe(String selectedLang, MultipartFile file) {
         MultipartBodyBuilder bodyBuilder = new MultipartBodyBuilder();
+        if (selectedLang.equals("en-US")) {
+            selectedLang = "en";
+        }
         if (selectedLang.equals("et-EE")) {
-            bodyBuilder.part("language", "et");
+            selectedLang = "et";
+        }
+        if (selectedLang.equals("ru-RU")) {
+            selectedLang = "ru";
+        }
+        if (selectedLang.equals("none")) {
+            selectedLang = null;
         }
 
         bodyBuilder.part("file", file.getResource());
+        if (selectedLang != null) {
+            bodyBuilder.part("language", selectedLang);
+        }
+
 
         return whisperClient.post()
                 .uri("/transcribe")
