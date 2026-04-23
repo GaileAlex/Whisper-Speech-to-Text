@@ -14,10 +14,8 @@ RUN pip3 install torch --index-url https://download.pytorch.org/whl/cu128
 # faster whisper + gunicorn
 RUN pip3 install faster-whisper flask gunicorn
 
-RUN python3 -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu')"
-
 COPY whisper_api.py .
 
 EXPOSE 5001
 
-CMD ["gunicorn", "-w", "1", "--threads", "1", "-b", "0.0.0.0:5001", "whisper_api:app"]
+CMD ["gunicorn", "-w", "1", "--threads", "1", "--timeout", "600", "--graceful-timeout", "600", "-b", "0.0.0.0:5001", "whisper_api:app"]

@@ -13,7 +13,7 @@ services:
     container_name: cv-whisper
     build: ./whisper-service
     volumes:
-      - C:\Users\Alex\.cache\whisper:/root/.cache/whisper
+      - C:\Users\Alex\.cache\huggingface:/root/.cache/huggingface
     ports:
       - "5001:5001"
     restart: unless-stopped

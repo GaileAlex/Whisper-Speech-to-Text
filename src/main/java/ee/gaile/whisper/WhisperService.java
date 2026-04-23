@@ -97,7 +97,8 @@ public class WhisperService {
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .bodyValue(builder.build())
                 .retrieve()
-                .bodyToMono(Map.class);
+                .bodyToMono(Map.class)
+                .timeout(Duration.ofSeconds(600));
     }
 
     private String normalizeLang(String lang) {
