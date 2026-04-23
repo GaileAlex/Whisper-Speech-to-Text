@@ -98,7 +98,7 @@ public class WhisperService {
                 .bodyValue(builder.build())
                 .retrieve()
                 .bodyToMono(Map.class)
-                .timeout(Duration.ofSeconds(600));
+                .timeout(Duration.ofSeconds(6000));
     }
 
     private String normalizeLang(String lang) {

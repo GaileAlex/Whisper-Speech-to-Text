@@ -19,7 +19,7 @@ public class WebClientConfig {
     @Value("${whisper.url}")
     private String whisperUrl;
 
-    private static final int TIMEOUT_SECONDS = 600;
+    private static final int TIMEOUT_SECONDS = 6000;
 
     @Bean
     public WebClient whisperClient() {

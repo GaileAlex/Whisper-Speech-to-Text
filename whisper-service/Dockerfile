@@ -18,4 +18,4 @@ COPY whisper_api.py .
 
 EXPOSE 5001
 
-CMD ["gunicorn", "-w", "1", "--threads", "1", "--timeout", "600", "--graceful-timeout", "600", "-b", "0.0.0.0:5001", "whisper_api:app"]
+CMD ["gunicorn", "-w", "1", "--threads", "2", "--timeout", "6000", "--graceful-timeout", "600", "-b", "0.0.0.0:5001", "whisper_api:app"]
