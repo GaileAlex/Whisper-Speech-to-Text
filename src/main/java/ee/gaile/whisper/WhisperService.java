@@ -1,7 +1,7 @@
 package ee.gaile.whisper;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Service;
@@ -10,7 +10,6 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Map;
 
 /**
@@ -53,41 +52,9 @@ public class WhisperService {
     }
 
     public Mono<Map<String, Object>> whisperTranscribe(MultipartFile file, String lang) {
-        return Mono.fromCallable(file::getInputStream)
-                .flatMapMany(stream -> {
-
-                    int chunkSize = 10_000_000;
-                    byte[] buffer = new byte[chunkSize];
-
-                    return reactor.core.publisher.Flux.generate(() -> stream, (s, sink) -> {
-                        try {
-                            int read = s.read(buffer);
-                            if (read == -1) {
-                                sink.complete();
-                            } else {
-                                sink.next(Arrays.copyOf(buffer, read));
-                            }
-                        } catch (Exception e) {
-                            sink.error(e);
-                        }
-                        return s;
-                    });
-                })
-                .cast(byte[].class)
-                .concatMap(chunk -> sendChunk(chunk, lang))
-                .map(resp -> resp.get("text").toString())
-                .collectList()
-                .map(list -> Map.of("text", String.join("\n", list)));
-    }
-
-    private Mono<Map> sendChunk(byte[] audioBytes, String lang) {
         MultipartBodyBuilder builder = new MultipartBodyBuilder();
-        builder.part("file", new ByteArrayResource(audioBytes) {
-            @Override
-            public String getFilename() {
-                return "chunk.mp3";
-            }
-        });
+        builder.part("file", file.getResource());
+
         if (lang != null && !lang.isBlank()) {
             builder.part("language", normalizeLang(lang));
         }
@@ -97,8 +64,8 @@ public class WhisperService {
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .bodyValue(builder.build())
                 .retrieve()
-                .bodyToMono(Map.class)
-                .timeout(Duration.ofSeconds(6000));
+                .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                .timeout(Duration.ofMinutes(120));
     }
 
     private String normalizeLang(String lang) {

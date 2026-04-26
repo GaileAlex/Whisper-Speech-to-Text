@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.config.CorsRegistry;
 import org.springframework.web.reactive.config.WebFluxConfigurer;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 
@@ -30,10 +31,16 @@ public class WebClientConfig {
                         .addHandlerLast(new ReadTimeoutHandler(TIMEOUT_SECONDS))
                         .addHandlerLast(new WriteTimeoutHandler(TIMEOUT_SECONDS))
                 );
+        ExchangeStrategies strategies = ExchangeStrategies.builder()
+                .codecs(configurer ->
+                        configurer.defaultCodecs().maxInMemorySize(100 * 1024 * 1024)
+                )
+                .build();
 
         return WebClient.builder()
                 .baseUrl(whisperUrl)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .exchangeStrategies(strategies)
                 .build();
     }
 
