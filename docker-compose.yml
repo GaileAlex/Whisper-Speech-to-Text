@@ -4,19 +4,19 @@ services:
     container_name: cv-whisper-app
     build: .
     restart: unless-stopped
-    ports:
-      - "8389:8389"
+    expose:
+      - "8389"
     networks:
       - kokoro-net
 
   whisper:
     container_name: cv-whisper
     build: ./whisper-service
+    restart: unless-stopped
+    expose:
+      - "5001"
     volumes:
       - C:\Users\Alex\.cache\huggingface:/root/.cache/huggingface
-    ports:
-      - "5001:5001"
-    restart: unless-stopped
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
