@@ -24,8 +24,8 @@ public class WhisperController {
     private final WhisperService whisperService;
 
     @PostMapping(value = "/transcribe/{selectedLang}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public Mono<Map> whisperTranscribe(@PathVariable("selectedLang") String selectedLang,
-                                       @RequestPart("file") MultipartFile file) {
+    public Mono<Map<String, Object>> whisperTranscribe(@PathVariable("selectedLang") String selectedLang,
+                                                     @RequestPart("file") MultipartFile file) {
         return whisperService.whisperTranscribe(selectedLang, file);
 
     }

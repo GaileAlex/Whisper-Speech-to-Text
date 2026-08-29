@@ -12,51 +12,19 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.util.Map;
 
-/**
- * @author Aleksei Gaile 6 Nov 2025
- */
 @Service
 @RequiredArgsConstructor
 public class WhisperService {
 
     private final WebClient whisperClient;
 
-    public Mono<Map> whisperTranscribe(String selectedLang, MultipartFile file) {
-        MultipartBodyBuilder bodyBuilder = new MultipartBodyBuilder();
-        if (selectedLang.equals("en-US")) {
-            selectedLang = "en";
-        }
-        if (selectedLang.equals("et-EE")) {
-            selectedLang = "et";
-        }
-        if (selectedLang.equals("ru-RU")) {
-            selectedLang = "ru";
-        }
-        if (selectedLang.equals("none")) {
-            selectedLang = null;
-        }
-
-        bodyBuilder.part("file", file.getResource());
-        if (selectedLang != null) {
-            bodyBuilder.part("language", selectedLang);
-        }
-
-
-        return whisperClient.post()
-                .uri("/transcribe")
-                .contentType(MediaType.MULTIPART_FORM_DATA)
-                .bodyValue(bodyBuilder.build())
-                .retrieve()
-                .bodyToMono(Map.class)
-                .timeout(Duration.ofMinutes(5));
-    }
-
     public Mono<Map<String, Object>> whisperTranscribe(MultipartFile file, String lang) {
         MultipartBodyBuilder builder = new MultipartBodyBuilder();
         builder.part("file", file.getResource());
 
-        if (lang != null && !lang.isBlank()) {
-            builder.part("language", normalizeLang(lang));
+        String normalized = normalizeLang(lang);
+        if (normalized != null) {
+            builder.part("language", normalized);
         }
 
         return whisperClient.post()
@@ -68,7 +36,14 @@ public class WhisperService {
                 .timeout(Duration.ofMinutes(120));
     }
 
+    public Mono<Map<String, Object>> whisperTranscribe(String selectedLang, MultipartFile file) {
+        return whisperTranscribe(file, selectedLang);
+    }
+
     private String normalizeLang(String lang) {
+        if (lang == null || lang.isBlank() || "none".equalsIgnoreCase(lang)) {
+            return null;
+        }
         return switch (lang) {
             case "en-US" -> "en";
             case "et-EE" -> "et";
