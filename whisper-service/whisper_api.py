@@ -9,8 +9,7 @@ from faster_whisper import WhisperModel
 
 app = Flask(__name__)
 
-# Рекомендуется заменить на large-v3-turbo
-MODEL_NAME = "large-v3-turbo"
+MODEL_NAME = "large-v3"
 DEVICE = "cuda"
 COMPUTE_TYPE = "int8_float16"
 IDLE_TIMEOUT = 30 * 60
