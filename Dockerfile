@@ -11,5 +11,8 @@ FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 COPY --from=builder /workspace/target/*.jar app.jar
 
+RUN useradd --create-home spring
+USER spring
+
 EXPOSE 8389
 ENTRYPOINT ["java", "-jar", "app.jar"]

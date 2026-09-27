@@ -1,123 +1,128 @@
-from flask import Flask, request, jsonify
-import tempfile
+import gc
+import logging
 import os
-import time
-import threading
 import subprocess
-import torch
+import tempfile
+import threading
+import time
+
 from faster_whisper import WhisperModel
+from flask import Flask, jsonify, request
+
+MODEL_NAME = os.getenv("WHISPER_MODEL", "large-v3")
+DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
+COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8_float16")
+IDLE_TIMEOUT = int(os.getenv("WHISPER_IDLE_TIMEOUT", 30 * 60))
+# 1 = greedy decoding (fastest); 5 = beam search, fewer misrecognized words in noisy audio
+BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", 5))
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("whisper")
+# huggingface_hub logs every HTTP request to the Hub on model load
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 app = Flask(__name__)
 
-MODEL_NAME = "large-v3"
-DEVICE = "cuda"
-COMPUTE_TYPE = "int8_float16"
-IDLE_TIMEOUT = 30 * 60
-
 model = None
-last_used = time.time()
+last_used = time.monotonic()
+# Serializes GPU work and guards model load/unload
 lock = threading.Lock()
 
-print("🚀 Whisper service starting...")
 
-def load_model():
+def get_model():
     global model
     if model is None:
-        print("🚀 Loading Whisper model...")
-        model = WhisperModel(
-            MODEL_NAME,
-            device=DEVICE,
-            compute_type=COMPUTE_TYPE
-        )
-        print("✅ Model loaded")
+        log.info("Loading model %s (%s, %s)...", MODEL_NAME, DEVICE, COMPUTE_TYPE)
+        model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
+        log.info("Model loaded")
+    return model
+
 
 def unload_model():
     global model
-    if model is not None:
-        print("🧹 Unloading model...")
-        del model
-        model = None
-        torch.cuda.empty_cache()
-        print("✅ GPU memory cleared")
+    model = None
+    gc.collect()
+    log.info("Model unloaded after %d s of inactivity", IDLE_TIMEOUT)
+
 
 def watchdog():
-    global last_used
     while True:
         time.sleep(60)
-        with lock: # ФИКС: Защита от Race Condition при выгрузке
-            if model is not None and (time.time() - last_used) > IDLE_TIMEOUT:
+        with lock:
+            if model is not None and time.monotonic() - last_used > IDLE_TIMEOUT:
                 unload_model()
+
 
 threading.Thread(target=watchdog, daemon=True).start()
 
-def convert_to_wav(input_path):
-    output_path = input_path + ".wav"
+
+def convert_to_wav(input_path, output_path):
     subprocess.run([
-        "ffmpeg", "-y", "-i", input_path,
+        "ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", input_path,
         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
         output_path
-    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return output_path
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
 
-@app.route("/transcribe", methods=["POST"])
+
+@app.post("/transcribe")
 def transcribe():
     global last_used
 
-    if "file" not in request.files:
+    file = request.files.get("file")
+    if file is None:
         return jsonify({"error": "no file"}), 400
 
-    file = request.files["file"]
     language = request.form.get("language")
-
-    tmp_path = None
-    wav_path = None
+    if language in ("", "none"):
+        language = None
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tmp:
-            file.save(tmp.name)
-            tmp_path = tmp.name
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            input_path = os.path.join(tmp_dir, "input")
+            wav_path = os.path.join(tmp_dir, "audio.wav")
+            file.save(input_path)
 
-        wav_path = convert_to_wav(tmp_path)
+            try:
+                convert_to_wav(input_path, wav_path)
+            except subprocess.CalledProcessError as e:
+                log.warning("ffmpeg failed for %s: %s", file.filename, e.stderr.strip())
+                return jsonify({"error": "cannot decode audio: " + e.stderr.strip()}), 400
 
-        with lock:
-            load_model()
-            start_time = time.time()
+            with lock:
+                try:
+                    whisper = get_model()
+                    start = time.monotonic()
+                    segments, info = whisper.transcribe(
+                        wav_path,
+                        language=language,
+                        task="transcribe",
+                        beam_size=BEAM_SIZE,
+                        temperature=0.0,
+                        vad_filter=True,
+                        vad_parameters=dict(min_silence_duration_ms=700),
+                        condition_on_previous_text=False
+                    )
+                    # segments is a lazy generator: the actual decoding happens here
+                    segments = [
+                        {"start": s.start, "end": s.end, "text": s.text.strip()}
+                        for s in segments
+                    ]
+                finally:
+                    last_used = time.monotonic()
 
-            segments, info = model.transcribe(
-                wav_path,
-                language=language if language and language != "none" else None,
-                task="transcribe",
-                beam_size=1,
-                temperature=0.0,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=700),
-                condition_on_previous_text=False
-            )
-
-            segments = list(segments)
-            last_used = time.time() # Обновляем время ПОСЛЕ завершения работы
-
-        # Clean output text (avoid repetition artifacts)
-        text = " ".join(seg.text.strip() for seg in segments)
-        elapsed = time.time() - start_time
-        print(f"🧠 Done in {elapsed:.2f}s")
+        log.info("Transcribed %s (%s, %.0f s of audio) in %.2f s",
+                 file.filename, info.language, info.duration, time.monotonic() - start)
 
         return jsonify({
-            "text": text,
+            "text": " ".join(s["text"] for s in segments),
             "language": info.language,
-            "segments": [
-                {"start": s.start, "end": s.end, "text": s.text.strip()}
-                for s in segments
-            ]
+            "segments": segments
         })
 
     except Exception as e:
+        log.exception("Transcription failed for %s", file.filename)
         return jsonify({"error": str(e)}), 500
 
-    finally:
-        for p in [tmp_path, wav_path]:
-            if p and os.path.exists(p):
-                os.remove(p)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, threaded=True)

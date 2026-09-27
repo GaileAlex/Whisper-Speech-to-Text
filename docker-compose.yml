@@ -16,7 +16,7 @@ services:
     ports:
       - "127.0.0.1:5001:5001"
     volumes:
-      - C:\Users\Alex\.cache\huggingface:/root/.cache/huggingface
+      - C:\Users\Alex\.cache\huggingface:/home/whisper/.cache/huggingface
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
