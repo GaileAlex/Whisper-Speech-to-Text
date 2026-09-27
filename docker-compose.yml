@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8389:8389"
+    environment:
+      TZ: Europe/Tallinn
     networks:
       - kokoro-net
 
@@ -17,7 +19,10 @@ services:
       - "127.0.0.1:5001:5001"
     volumes:
       - C:\Users\Alex\.cache\huggingface:/home/whisper/.cache/huggingface
+      # CUDA compiles its kernels for the GPU on the first request (~25 s); keep them across container re-creation
+      - cuda-cache:/home/whisper/.nv
     environment:
+      TZ: Europe/Tallinn
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     deploy:
@@ -32,6 +37,9 @@ services:
               capabilities: [ gpu ]
     networks:
       - kokoro-net
+
+volumes:
+  cuda-cache:
 
 networks:
   kokoro-net:
