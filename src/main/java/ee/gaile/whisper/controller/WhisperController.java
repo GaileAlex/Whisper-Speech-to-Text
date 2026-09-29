@@ -31,16 +31,21 @@ public class WhisperController {
 
     private final WhisperService whisperService;
 
+    /**
+     * @param speech true: the result has the intervals of speech too, see {@link TranscriptionResult#speech()}
+     */
     @PostMapping(value = "/transcribe/{selectedLang}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Mono<TranscriptionResult> whisperTranscribe(@PathVariable("selectedLang") String selectedLang,
-                                                       @RequestPart("file") MultipartFile file) {
-        return whisperService.transcribe(file, selectedLang);
+                                                       @RequestPart("file") MultipartFile file,
+                                                       @RequestParam(value = "speech", defaultValue = "false") boolean speech) {
+        return whisperService.transcribe(file, selectedLang, speech);
     }
 
     @PostMapping("/transcribe")
     public Mono<TranscriptionResult> transcribe(@RequestParam("file") MultipartFile file,
-                                                @RequestParam(value = "lang", required = false) String lang) {
-        return whisperService.transcribe(file, lang);
+                                                @RequestParam(value = "lang", required = false) String lang,
+                                                @RequestParam(value = "speech", defaultValue = "false") boolean speech) {
+        return whisperService.transcribe(file, lang, speech);
     }
 
     /**

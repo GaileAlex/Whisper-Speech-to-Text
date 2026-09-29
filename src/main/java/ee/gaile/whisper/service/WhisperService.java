@@ -19,7 +19,10 @@ public class WhisperService {
 
     private final WebClient whisperClient;
 
-    public Mono<TranscriptionResult> transcribe(MultipartFile file, String lang) {
+    /**
+     * @param speech also the intervals of speech, for the pause analysis
+     */
+    public Mono<TranscriptionResult> transcribe(MultipartFile file, String lang, boolean speech) {
         String filename = file.getOriginalFilename();
         String language = toWhisperLanguage(lang);
 
@@ -28,9 +31,12 @@ public class WhisperService {
         if (language != null) {
             builder.part("language", language);
         }
+        if (speech) {
+            builder.part("speech", "true");
+        }
 
-        log.info("Transcribing file: {} ({} bytes, language: {})",
-                filename, file.getSize(), language != null ? language : "auto");
+        log.info("Transcribing file: {} ({} bytes, language: {}{})",
+                filename, file.getSize(), language != null ? language : "auto", speech ? ", speech intervals" : "");
 
         return whisperClient.post()
                 .uri("/transcribe")

@@ -6,7 +6,8 @@ import tempfile
 import threading
 import time
 
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel, decode_audio
+from faster_whisper.vad import VadOptions, get_speech_timestamps
 from flask import Flask, jsonify, request
 
 MODEL_NAME = os.getenv("WHISPER_MODEL", "large-v3")
@@ -15,6 +16,11 @@ COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8_float16")
 IDLE_TIMEOUT = int(os.getenv("WHISPER_IDLE_TIMEOUT", 30 * 60))
 # 1 = greedy decoding (fastest); 5 = beam search, fewer misrecognized words in noisy audio
 BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", 5))
+# Whisper and its VAD work on 16 kHz mono: every upload is converted to it (convert_to_wav)
+SAMPLING_RATE = 16000
+# The speech intervals for the pause analysis (fluency). Whisper word timestamps stretch the words over the pauses,
+# so the pauses are measured by the VAD: every silence from 250 ms (the usual lower bound of a pause), no padding
+SPEECH_VAD = VadOptions(min_silence_duration_ms=250, speech_pad_ms=0)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("whisper")
@@ -59,9 +65,18 @@ threading.Thread(target=watchdog, daemon=True).start()
 def convert_to_wav(input_path, output_path):
     subprocess.run([
         "ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", input_path,
-        "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+        "-ar", str(SAMPLING_RATE), "-ac", "1", "-c:a", "pcm_s16le",
         output_path
     ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+
+
+def speech_intervals(wav_path):
+    """The intervals of speech in seconds; the gaps between them are the pauses."""
+    audio = decode_audio(wav_path, sampling_rate=SAMPLING_RATE)
+    return [
+        {"start": round(t["start"] / SAMPLING_RATE, 3), "end": round(t["end"] / SAMPLING_RATE, 3)}
+        for t in get_speech_timestamps(audio, SPEECH_VAD)
+    ]
 
 
 @app.post("/transcribe")
@@ -75,6 +90,9 @@ def transcribe():
     language = request.form.get("language")
     if language in ("", "none"):
         language = None
+    # "true": the response has the speech intervals too
+    with_speech = request.form.get("speech") == "true"
+    speech = None
 
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -110,14 +128,21 @@ def transcribe():
                 finally:
                     last_used = time.monotonic()
 
+            # the VAD runs on the CPU: no need to hold the GPU lock
+            if with_speech:
+                speech = speech_intervals(wav_path)
+
         log.info("Transcribed %s (%s, %.0f s of audio) in %.2f s",
                  file.filename, info.language, info.duration, time.monotonic() - start)
 
-        return jsonify({
+        result = {
             "text": " ".join(s["text"] for s in segments),
             "language": info.language,
             "segments": segments
-        })
+        }
+        if speech is not None:
+            result["speech"] = speech
+        return jsonify(result)
 
     except Exception as e:
         log.exception("Transcription failed for %s", file.filename)
