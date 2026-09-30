@@ -34,6 +34,11 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
+        <!-- the traceId of CV (traceparent header) in the log lines of a transcription; the spans are not sent anywhere -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-brave</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.projectlombok</groupId>

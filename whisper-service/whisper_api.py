@@ -26,6 +26,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("whisper")
 # huggingface_hub logs every HTTP request to the Hub on model load
 logging.getLogger("httpx").setLevel(logging.WARNING)
+# faster_whisper adds two lines to every transcription ("Processing audio with duration", "VAD filter removed"):
+# the line "Transcribed ..." below has the length of the audio and the time
+logging.getLogger("faster_whisper").setLevel(logging.WARNING)
 
 app = Flask(__name__)
 
