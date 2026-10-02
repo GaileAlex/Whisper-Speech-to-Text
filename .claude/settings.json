@@ -1,0 +1,12 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "env": {
+    "GIT_AUTHOR_NAME": "GaileAlex",
+    "GIT_AUTHOR_EMAIL": "aleksei.gaile@gmail.com",
+    "GIT_COMMITTER_NAME": "GaileAlex",
+    "GIT_COMMITTER_EMAIL": "aleksei.gaile@gmail.com"
+  }
+}
