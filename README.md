@@ -20,7 +20,8 @@ cv-app ──► cv-whisper-app (Spring Boot, :8389) ──► cv-whisper (Pytho
 
 ## 🛠 Technologies
 
-- **Java 25** with **Spring Boot 4.1** - Spring MVC, WebClient (Reactor Netty), Actuator, Micrometer Tracing
+- **Java 25** with **Spring Boot 4.1** - Spring MVC on virtual threads, RestClient (JDK HttpClient), Actuator,
+  Micrometer Tracing
 - **Python 3.12** - faster-whisper 1.2 (CTranslate2 4.8), Flask, gunicorn
 - **NVIDIA CUDA 12.9 + cuDNN 9**, model `large-v3` in `int8_float16`
 - **ffmpeg** - decoding of any audio/video format
@@ -43,8 +44,8 @@ docker compose up -d --build
 
 - `cv-whisper-app` is published on `127.0.0.1:8389`, `cv-whisper` on `127.0.0.1:5001` (only the host itself; CV
   reaches them over `kokoro-net`).
-- `docker-compose.yml` mounts the Hugging Face cache of the host (`C:\Users\Alex\.cache\huggingface`) so that the
-  model (~3 GB) is downloaded only once: change the path for another host.
+- `docker-compose.yml` mounts the Hugging Face cache of the host so that the model (~3 GB) is downloaded only once:
+  `C:/Users/Alex/.cache/huggingface`, or `HF_CACHE` in `.env` on another host.
 - The volume `cuda-cache` keeps the CUDA kernels compiled for the GPU: without it the first request after a new
   container takes ~25 s longer.
 - The first request after a start or an idle half hour loads the model (several seconds).
@@ -57,7 +58,7 @@ docker compose up -d --build
 
 The `dev` profile listens on 8395 (Actuator on 8396) and calls the Python service at `http://localhost:5001`
 (`WHISPER_URL`), e.g. the container of `docker compose up -d whisper`. `dev/whisper.html` is a test page for it:
-open it in the browser, choose a file and a language.
+open it in the browser, choose a file and a language (CORS allows it in the `dev` profile only).
 
 ## 📚 API
 
@@ -126,7 +127,6 @@ Spring Boot (`src/main/resources/application.properties`):
 |----------------------------------|-------------------------|-----------------------------------------------------|
 | `whisper.url` (`WHISPER_URL`)    | `http://cv-whisper:5001`| the Python service                                  |
 | `whisper.timeout`                | `100m`                  | keep in sync with gunicorn `--timeout`              |
-| `spring.mvc.async.request-timeout` | `105m`                | longer than `whisper.timeout`                       |
 | `spring.servlet.multipart.max-file-size` | `10GB`          | the largest upload                                  |
 
 ## 📈 Monitoring
@@ -145,12 +145,13 @@ Collected by the project [observability](https://github.com/GaileAlex/observabil
 ./mvnw verify
 ```
 
-Unit tests of the controller (`@WebMvcTest`, the Python service mocked) and of the language mapping.
+Unit tests of the controller (`@WebMvcTest`, the Python service mocked), of the request to the Python service
+(`MockRestServiceServer`) and of the language mapping.
 
 ## 🔐 Dependencies
 
 - GitHub Dependabot alerts and security updates are on; the automatic dependency submission reports the Maven
-  dependencies the Spring Boot BOM brings (Tomcat, Netty, Jackson, ...), not only the ones in `pom.xml`.
+  dependencies the Spring Boot BOM brings (Tomcat, Jackson, ...), not only the ones in `pom.xml`.
 - `pom.xml` may override versions of the Boot BOM (`tomcat.version`, `jackson-bom.version`) for an advisory that the
   current Boot release does not fix yet: drop the override when Boot catches up.
 - `whisper-service/requirements.txt` pins the direct Python dependencies and PyAV (version 19 breaks

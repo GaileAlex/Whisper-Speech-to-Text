@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### the paths of this host (HF_CACHE) ###
+.env
