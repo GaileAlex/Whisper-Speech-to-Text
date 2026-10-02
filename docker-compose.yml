@@ -18,7 +18,8 @@ services:
     ports:
       - "127.0.0.1:5001:5001"
     volumes:
-      - C:\Users\Alex\.cache\huggingface:/home/whisper/.cache/huggingface
+      # the Hugging Face cache of the host (HF_CACHE in .env): the model is downloaded only once
+      - ${HF_CACHE:-C:/Users/Alex/.cache/huggingface}:/home/whisper/.cache/huggingface
       # CUDA compiles its kernels for the GPU on the first request (~25 s); keep them across container re-creation
       - cuda-cache:/home/whisper/.nv
     environment:

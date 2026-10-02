@@ -15,5 +15,4 @@ RUN useradd --create-home spring
 USER spring
 
 EXPOSE 8389
-# Netty loads its native epoll transport: without the flag Java 25 warns that this will be blocked
-ENTRYPOINT ["java", "--enable-native-access=ALL-UNNAMED", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-jar", "app.jar"]
