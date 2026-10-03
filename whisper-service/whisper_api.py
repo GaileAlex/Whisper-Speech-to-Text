@@ -55,6 +55,7 @@ def unload_model():
 
 
 def watchdog():
+    """Frees the GPU memory when nobody has transcribed for IDLE_TIMEOUT seconds."""
     while True:
         time.sleep(60)
         with lock:
@@ -93,7 +94,6 @@ def transcribe():
     language = request.form.get("language")
     if language in ("", "none"):
         language = None
-    # "true": the response has the speech intervals too
     with_speech = request.form.get("speech") == "true"
     speech = None
 
@@ -121,6 +121,7 @@ def transcribe():
                         temperature=0.0,
                         vad_filter=True,
                         vad_parameters=dict(min_silence_duration_ms=700),
+                        # with the previous text as the prompt one misrecognized phrase gets repeated in the next segments
                         condition_on_previous_text=False
                     )
                     # segments is a lazy generator: the actual decoding happens here

@@ -26,8 +26,8 @@ COPY whisper_api.py .
 # The model cache lives in ~/.cache/huggingface, the CUDA kernel cache in ~/.nv (both mounted in docker-compose.yml).
 # ~/.nv is created here so that the named volume mounted over it is owned by whisper, not root; ~/.cache too, or
 # Docker creates it for the mount as root and onnxruntime (VAD) cannot keep its files there.
-# whisper keeps uid 1000 of the Ubuntu 22.04 image, the owner of the existing volume: the user ubuntu of the base
-# image gives it up.
+# The user ubuntu of the base image is removed so that whisper keeps uid 1000, the owner of the volumes created with
+# the former Ubuntu 22.04 image.
 RUN userdel --remove ubuntu && useradd --create-home --uid 1000 whisper && \
     install -d -o whisper -g whisper /home/whisper/.nv /home/whisper/.cache
 USER whisper

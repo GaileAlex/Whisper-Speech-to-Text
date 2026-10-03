@@ -51,7 +51,7 @@ class WhisperControllerTest {
                 .andExpect(jsonPath("$.text").value("tere"))
                 .andExpect(jsonPath("$.language").value("et"))
                 .andExpect(jsonPath("$.segments[0].end").value(1.5))
-                // the clients that did not ask for the speech intervals get the same result as before
+                // no speech field unless it was asked for: the response of the older clients is unchanged
                 .andExpect(jsonPath("$.speech").doesNotExist());
     }
 
