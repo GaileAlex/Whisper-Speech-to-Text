@@ -38,6 +38,9 @@ public class WhisperController {
         return whisperService.transcribe(file, selectedLang, speech);
     }
 
+    /**
+     * The same with the language as a form field, as dev/whisper.html sends it.
+     */
     @PostMapping("/transcribe")
     public TranscriptionResult transcribe(@RequestParam("file") MultipartFile file,
                                           @RequestParam(value = "lang", required = false) String lang,

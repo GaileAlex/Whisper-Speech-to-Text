@@ -6,8 +6,8 @@ import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * dev/whisper.html is opened from the disk and calls the dev profile in the browser. In production only the server
- * of CV calls the API: no CORS there.
+ * dev/whisper.html is opened from the disk and calls the application started with the dev profile from the browser.
+ * In production only the CV server calls the API, so there is no CORS there.
  */
 @Configuration
 @Profile("dev")
