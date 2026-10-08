@@ -2,10 +2,12 @@ package ee.gaile.whisper.controller;
 
 import ee.gaile.whisper.dto.TranscriptionResult;
 import ee.gaile.whisper.service.WhisperService;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,6 +18,9 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.http.HttpTimeoutException;
 import java.util.Map;
 
@@ -39,13 +44,48 @@ public class WhisperController {
     }
 
     /**
-     * The same with the language as a form field, as dev/whisper.html sends it.
+     * A long recording uploaded as a file. The answer of the Python service is passed on as it comes: a refusal
+     * with its status, or the stream of JSON lines with the progress and at the end the result.
+     *
+     * @param maxSeconds the longest audio the caller takes
      */
-    @PostMapping("/transcribe")
-    public TranscriptionResult transcribe(@RequestParam("file") MultipartFile file,
-                                          @RequestParam(value = "lang", required = false) String lang,
-                                          @RequestParam(value = "speech", defaultValue = "false") boolean speech) {
-        return whisperService.transcribe(file, lang, speech);
+    @PostMapping(value = "/transcribe-file/{selectedLang}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public void transcribeFile(@PathVariable("selectedLang") String selectedLang,
+                               @RequestPart("file") MultipartFile file,
+                               @RequestParam("maxSeconds") long maxSeconds,
+                               HttpServletResponse servletResponse) throws IOException {
+        // written on the request thread (a virtual one) straight to the response: an asynchronous
+        // StreamingResponseBody reached the client only at the end
+        try (ClientHttpResponse response = whisperService.transcribeFile(file, selectedLang, maxSeconds);
+             InputStream in = response.getBody()) {
+            servletResponse.setStatus(response.getStatusCode().value());
+            MediaType type = response.getHeaders().getContentType();
+            if (type != null) {
+                servletResponse.setContentType(type.toString());
+            }
+            copyFlushing(in, servletResponse.getOutputStream());
+        }
+    }
+
+    /**
+     * Every piece is sent on at once: a line of progress must not wait in a buffer. When the client goes away the
+     * write fails, and closing the answer of the Python service stops the transcription there.
+     */
+    static void copyFlushing(InputStream in, OutputStream out) throws IOException {
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = in.read(buffer)) != -1) {
+            out.write(buffer, 0, read);
+            out.flush();
+        }
+    }
+
+    /**
+     * Loads the model ahead of a recording; answers at once.
+     */
+    @PostMapping("/warmup")
+    public Map<String, Object> warmup() {
+        return whisperService.warmup();
     }
 
     /**

@@ -9,10 +9,13 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+
+import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
@@ -64,6 +67,45 @@ class WhisperServiceTest {
         assertThatExceptionOfType(HttpClientErrorException.class)
                 .isThrownBy(() -> service.transcribe(FILE, null, false))
                 .satisfies(e -> assertThat(e.getResponseBodyAsString()).contains("cannot decode audio"));
+    }
+
+    @Test
+    void transcribeFile_sendsTheLanguageAndTheLimitAndReturnsTheStreamOpen() throws Exception {
+        whisper.expect(requestTo("http://whisper/transcribe-file"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().string(allOf(
+                        containsString("name=\"file\"; filename=\"audio.webm\""),
+                        matchesRegex("(?s).*name=\"language\".*\r\n\r\net\r\n.*"),
+                        matchesRegex("(?s).*name=\"max_seconds\".*\r\n\r\n10800\r\n.*"))))
+                .andRespond(withSuccess("{\"stage\": \"converting\"}\n", MediaType.parseMediaType("application/x-ndjson")));
+
+        try (ClientHttpResponse response = service.transcribeFile(FILE, "et-EE", 10800)) {
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8))
+                    .isEqualTo("{\"stage\": \"converting\"}\n");
+        }
+        whisper.verify();
+    }
+
+    @Test
+    void transcribeFile_returnsARefusalInsteadOfThrowing() throws Exception {
+        whisper.expect(requestTo("http://whisper/transcribe-file"))
+                .andRespond(withStatus(HttpStatus.CONTENT_TOO_LARGE)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"error\": \"the audio is too long\", \"reason\": \"too_long\", \"seconds\": 12000}"));
+
+        try (ClientHttpResponse response = service.transcribeFile(FILE, null, 10800)) {
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONTENT_TOO_LARGE);
+        }
+    }
+
+    @Test
+    void warmup_returnsWhetherTheModelIsLoaded() {
+        whisper.expect(requestTo("http://whisper/warmup"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"loaded\": false}", MediaType.APPLICATION_JSON));
+
+        assertThat(service.warmup()).containsEntry("loaded", false);
     }
 
     @ParameterizedTest
