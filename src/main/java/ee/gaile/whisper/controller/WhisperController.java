@@ -2,6 +2,7 @@ package ee.gaile.whisper.controller;
 
 import ee.gaile.whisper.dto.TranscriptionResult;
 import ee.gaile.whisper.service.WhisperService;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -16,7 +17,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -50,19 +50,21 @@ public class WhisperController {
      * @param maxSeconds the longest audio the caller takes
      */
     @PostMapping(value = "/transcribe-file/{selectedLang}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<StreamingResponseBody> transcribeFile(@PathVariable("selectedLang") String selectedLang,
-                                                                @RequestPart("file") MultipartFile file,
-                                                                @RequestParam("maxSeconds") long maxSeconds)
-            throws IOException {
-        ClientHttpResponse response = whisperService.transcribeFile(file, selectedLang, maxSeconds);
-        StreamingResponseBody body = out -> {
-            try (response; InputStream in = response.getBody()) {
-                copyFlushing(in, out);
+    public void transcribeFile(@PathVariable("selectedLang") String selectedLang,
+                               @RequestPart("file") MultipartFile file,
+                               @RequestParam("maxSeconds") long maxSeconds,
+                               HttpServletResponse servletResponse) throws IOException {
+        // written on the request thread (a virtual one) straight to the response: an asynchronous
+        // StreamingResponseBody reached the client only at the end
+        try (ClientHttpResponse response = whisperService.transcribeFile(file, selectedLang, maxSeconds);
+             InputStream in = response.getBody()) {
+            servletResponse.setStatus(response.getStatusCode().value());
+            MediaType type = response.getHeaders().getContentType();
+            if (type != null) {
+                servletResponse.setContentType(type.toString());
             }
-        };
-        return ResponseEntity.status(response.getStatusCode())
-                .contentType(response.getHeaders().getContentType())
-                .body(body);
+            copyFlushing(in, servletResponse.getOutputStream());
+        }
     }
 
     /**

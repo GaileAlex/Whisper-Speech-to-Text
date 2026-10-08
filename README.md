@@ -153,7 +153,6 @@ Spring Boot (`src/main/resources/application.properties`):
 |----------------------------------|-------------------------|-----------------------------------------------------|
 | `whisper.url` (`WHISPER_URL`)    | `http://cv-whisper:5001`| the Python service                                  |
 | `whisper.timeout`                | `100m`                  | keep in sync with gunicorn `--timeout`              |
-| `spring.mvc.async.request-timeout` | `100m`                | the stream of a long file                           |
 | `spring.servlet.multipart.max-file-size` | `200MB`         | the largest upload                                  |
 
 ## 📈 Monitoring

@@ -12,27 +12,31 @@ import org.springframework.mock.http.client.MockClientHttpResponse;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.SequenceInputStream;
 import java.net.ConnectException;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(WhisperController.class)
@@ -117,14 +121,31 @@ class WhisperControllerTest {
         given(whisperService.transcribeFile(any(), eq("et-EE"), eq(10800L)))
                 .willReturn(answer(HttpStatus.OK, NDJSON, lines));
 
-        MvcResult started = mockMvc.perform(MockMvcRequestBuilders.multipart("/transcribe-file/et-EE").file(FILE)
+        mockMvc.perform(MockMvcRequestBuilders.multipart("/transcribe-file/et-EE").file(FILE)
                         .param("maxSeconds", "10800"))
-                .andExpect(request().asyncStarted())
-                .andReturn();
-        mockMvc.perform(asyncDispatch(started))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(NDJSON))
                 .andExpect(content().string(lines));
+    }
+
+    @Test
+    void copyFlushing_sendsEveryPieceAtOnce() throws Exception {
+        List<String> flushed = new ArrayList<>();
+        ByteArrayOutputStream sent = new ByteArrayOutputStream() {
+            @Override
+            public void flush() {
+                flushed.add(toString(StandardCharsets.UTF_8));
+            }
+        };
+        // a stream that gives one line per read, as the answer of Whisper comes
+        InputStream lines = new SequenceInputStream(Collections.enumeration(List.of(
+                new ByteArrayInputStream("{\"stage\": \"converting\"}\n".getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayInputStream("{\"stage\": \"checking\"}\n".getBytes(StandardCharsets.UTF_8)))));
+
+        WhisperController.copyFlushing(lines, sent);
+
+        assertThat(flushed).containsExactly("{\"stage\": \"converting\"}\n",
+                "{\"stage\": \"converting\"}\n{\"stage\": \"checking\"}\n");
     }
 
     @Test
@@ -133,10 +154,8 @@ class WhisperControllerTest {
         given(whisperService.transcribeFile(any(), any(), anyLong()))
                 .willReturn(answer(HttpStatus.UNSUPPORTED_MEDIA_TYPE, MediaType.APPLICATION_JSON, refusal));
 
-        MvcResult started = mockMvc.perform(MockMvcRequestBuilders.multipart("/transcribe-file/none").file(FILE)
+        mockMvc.perform(MockMvcRequestBuilders.multipart("/transcribe-file/none").file(FILE)
                         .param("maxSeconds", "10800"))
-                .andReturn();
-        mockMvc.perform(asyncDispatch(started))
                 .andExpect(status().isUnsupportedMediaType())
                 .andExpect(jsonPath("$.reason").value("video"));
     }

@@ -63,6 +63,7 @@ REPAIR_MAX_SHARE = 0.25
 CUE_MAX_SECONDS = 6
 CUE_MAX_CHARS = 84
 CUE_PAUSE_SECONDS = 1.0
+INITIAL = re.compile(r"^\w\.$")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("whisper")
@@ -423,7 +424,8 @@ def cues(segments):
                             or sum(len(c["word"]) for c in current) + len(w["word"]) > CUE_MAX_CHARS):
                 close()
             current.append(w)
-            if w["word"].rstrip().endswith((".", "!", "?", "…")):
+            # an initial ("L. T. Meade") does not end a sentence
+            if w["word"].rstrip().endswith((".", "!", "?", "…")) and not INITIAL.match(w["word"].strip()):
                 close()
         close()
     return result
