@@ -10,13 +10,26 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections import Counter
 from contextlib import contextmanager
 
 from faster_whisper import BatchedInferencePipeline, WhisperModel, decode_audio
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 from flask import Flask, Response, jsonify, request
+from huggingface_hub import snapshot_download
+from huggingface_hub.errors import LocalEntryNotFoundError
 
+# the main model: every language without a model of its own, and the detection of the language
 MODEL_NAME = os.getenv("WHISPER_MODEL", "large-v3")
+MAIN = "main"
+# Languages with a model of their own: (repository, revision, folder of the CTranslate2 model). Estonian: large-v3-turbo
+# fine-tuned by TalTech on 1400 h of verbatim Estonian transcripts. Measured on 2026-10-12 with the options of
+# /transcribe (FLEURS et test): 5.7% WER instead of 18.2% on the phrases without numbers (large-v3 splits compound
+# words and garbles endings), 3.5 times faster, 2 GB of VRAM instead of 3.6. It writes numbers as words ("kahe tuhande
+# üheteistkümnendal") and its English is worse than large-v3's, so only Estonian goes to it
+LANGUAGE_MODELS = {
+    "et": ("TalTechNLP/whisper-large-v3-turbo-et-verbatim-2604", "310c550922fc1d1bebf3fad41f9b33ede6652bdc", "ct2"),
+}
 DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
 # float16 measured on the RTX 5060 Ti (2026-10-08): 19-24% faster than int8_float16 with the same error rate
 # (Estonian slightly better); the model takes ~3.6 GB of VRAM instead of ~2 GB
@@ -29,6 +42,8 @@ SAMPLING_RATE = 16000
 # The speech intervals for the pause analysis (fluency). Whisper word timestamps stretch the words over the pauses,
 # so the pauses are measured by the VAD: every silence from 250 ms (the usual lower bound of a pause), no padding
 SPEECH_VAD = VadOptions(min_silence_duration_ms=250, speech_pad_ms=0)
+# the VAD filter of the decoding of a recording: the silences from 0.7 s are cut out
+VOICE_VAD = VadOptions(min_silence_duration_ms=700)
 # A recording up to one window of the model is decoded without timestamp tokens: the callers use only its text, and it
 # is 3-10% faster. A longer one keeps them: without them the decoding moves in fixed 30 s windows and may cut a word
 SHORT_AUDIO_SECONDS = 30
@@ -75,59 +90,85 @@ logging.getLogger("faster_whisper").setLevel(logging.WARNING)
 
 app = Flask(__name__)
 
-model = None
-last_used = time.monotonic()
-# requests that use the model now: it is not unloaded under them
-active = 0
+# the loaded models by key: MAIN or a language of LANGUAGE_MODELS
+models = {}
+# when each model was used last, and the requests that use it now: a model is not unloaded under them
+last_used = {}
+active = Counter()
 warming_up = False
-# Guards loading, unloading and the counter. The transcriptions themselves run in parallel: CTranslate2 runs the work
+# Guards loading, unloading and the counters. The transcriptions themselves run in parallel: CTranslate2 runs the work
 # of the threads on the GPU one batch after another, so a short recording waits for a batch of a long file, not for
 # the whole file (measured: 2.7-3.4 s instead of 1.7 s for 10 s of speech)
 lock = threading.Lock()
 
 
-def get_model():
+def model_label(key):
+    return MODEL_NAME if key == MAIN else LANGUAGE_MODELS[key][0].split("/")[-1]
+
+
+def language_model_path(language):
+    """The folder of the model of a language in the Hugging Face cache, downloaded on the first use."""
+    repo, revision, folder = LANGUAGE_MODELS[language]
+    files = [f"{folder}/*"]
+    try:
+        path = snapshot_download(repo, revision=revision, allow_patterns=files, local_files_only=True)
+    except LocalEntryNotFoundError:
+        log.info("Downloading model %s...", repo)
+        path = snapshot_download(repo, revision=revision, allow_patterns=files)
+    return os.path.join(path, folder)
+
+
+def get_model(key=MAIN):
     """Under the lock."""
-    global model
-    if model is None:
-        log.info("Loading model %s (%s, %s)...", MODEL_NAME, DEVICE, COMPUTE_TYPE)
-        model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
+    if key not in models:
+        log.info("Loading model %s (%s, %s)...", model_label(key), DEVICE, COMPUTE_TYPE)
+        path = MODEL_NAME if key == MAIN else language_model_path(key)
+        models[key] = WhisperModel(path, device=DEVICE, compute_type=COMPUTE_TYPE)
+        last_used[key] = time.monotonic()
         log.info("Model loaded")
-    return model
+    return models[key]
 
 
-def unload_model():
-    global model
-    model = None
+def unload_model(key):
+    del models[key]
     gc.collect()
-    log.info("Model unloaded after %d s of inactivity", IDLE_TIMEOUT)
+    log.info("Model %s unloaded after %d s of inactivity", model_label(key), IDLE_TIMEOUT)
 
 
 @contextmanager
-def using_model():
+def using_model(key=MAIN):
     """The model, loaded if needed; the idle time counts from the end of the use."""
-    global active, last_used
     with lock:
-        whisper = get_model()
-        active += 1
+        whisper = get_model(key)
+        active[key] += 1
     try:
         yield whisper
     finally:
         with lock:
-            active -= 1
-            last_used = time.monotonic()
+            active[key] -= 1
+            last_used[key] = time.monotonic()
 
 
 def watchdog():
-    """Frees the GPU memory when nobody has used the model for IDLE_TIMEOUT seconds."""
+    """Frees the GPU memory of a model nobody has used for IDLE_TIMEOUT seconds."""
     while True:
         time.sleep(60)
         with lock:
-            if model is not None and active == 0 and time.monotonic() - last_used > IDLE_TIMEOUT:
-                unload_model()
+            for key in list(models):
+                if active[key] == 0 and time.monotonic() - last_used[key] > IDLE_TIMEOUT:
+                    unload_model(key)
 
 
 threading.Thread(target=watchdog, daemon=True).start()
+
+
+def model_for(language, audio, vad_filter):
+    """The model to decode the audio with and the language to decode it in. Without a language the main model detects
+    it from the first 30 s of speech, as its transcribe() would; a language with a model of its own goes to that one."""
+    if language is None:
+        with using_model() as whisper:
+            language, _, _ = whisper.detect_language(audio, vad_filter=vad_filter, vad_parameters=VOICE_VAD)
+    return (language if language in LANGUAGE_MODELS else MAIN), language
 
 
 def convert_to_wav(input_path, output_path, max_seconds=None):
@@ -139,14 +180,8 @@ def convert_to_wav(input_path, output_path, max_seconds=None):
                    timeout=CONVERT_TIMEOUT)
 
 
-def wav_seconds(wav_path):
-    # 16-bit mono after a 44-byte header
-    return max(os.path.getsize(wav_path) - 44, 0) / (SAMPLING_RATE * 2)
-
-
-def speech_intervals(wav_path):
+def speech_intervals(audio):
     """The intervals of speech in seconds; the gaps between them are the pauses."""
-    audio = decode_audio(wav_path, sampling_rate=SAMPLING_RATE)
     return [
         {"start": round(t["start"] / SAMPLING_RATE, 3), "end": round(t["end"] / SAMPLING_RATE, 3)}
         for t in get_speech_timestamps(audio, SPEECH_VAD)
@@ -155,16 +190,16 @@ def speech_intervals(wav_path):
 
 @app.post("/warmup")
 def warmup():
-    """Loads the model ahead of a recording (the user pressed the microphone): the load takes 15-25 s.
+    """Loads the main model ahead of a recording (the user pressed the microphone): the load takes 15-25 s.
     Answers at once; the idle unload goes on as before, counting from now."""
-    global warming_up, last_used
+    global warming_up
     # the lock is held for the whole load: a warm-up during a load (its own or a transcription's) does not wait for it
     if warming_up or not lock.acquire(timeout=1):
         return jsonify({"loaded": False})
     try:
-        loaded = model is not None
+        loaded = MAIN in models
         if loaded:
-            last_used = time.monotonic()
+            last_used[MAIN] = time.monotonic()
         else:
             warming_up = True
             threading.Thread(target=load_ahead, daemon=True).start()
@@ -174,11 +209,10 @@ def warmup():
 
 
 def load_ahead():
-    global warming_up, last_used
+    global warming_up
     try:
         with lock:
             get_model()
-            last_used = time.monotonic()
     except Exception:
         log.exception("Warm-up failed")
     finally:
@@ -209,19 +243,21 @@ def transcribe():
                 log.warning("ffmpeg failed for %s: %s", file.filename, (e.stderr or "timeout").strip())
                 return jsonify({"error": "cannot decode audio"}), 400
 
-            with using_model() as whisper:
+            audio = decode_audio(wav_path, sampling_rate=SAMPLING_RATE)
+            key, language = model_for(language, audio, vad_filter=True)
+            with using_model(key) as whisper:
                 start = time.monotonic()
                 segments, info = whisper.transcribe(
-                    wav_path,
+                    audio,
                     language=language,
                     task="transcribe",
                     beam_size=BEAM_SIZE,
                     temperature=0.0,
                     vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=700),
+                    vad_parameters=VOICE_VAD,
                     # with the previous text as the prompt one misrecognized phrase gets repeated in the next segments
                     condition_on_previous_text=False,
-                    without_timestamps=wav_seconds(wav_path) <= SHORT_AUDIO_SECONDS
+                    without_timestamps=len(audio) / SAMPLING_RATE <= SHORT_AUDIO_SECONDS
                 )
                 # segments is a lazy generator: the actual decoding happens here
                 segments = [
@@ -231,10 +267,10 @@ def transcribe():
 
             # the VAD runs on the CPU, after the model is released
             if with_speech:
-                speech = speech_intervals(wav_path)
+                speech = speech_intervals(audio)
 
-        log.info("Transcribed %s (%s, %.0f s of audio) in %.2f s",
-                 file.filename, info.language, info.duration, time.monotonic() - start)
+        log.info("Transcribed %s (%s, %s, %.0f s of audio) in %.2f s",
+                 file.filename, info.language, model_label(key), info.duration, time.monotonic() - start)
 
         result = {
             "text": " ".join(s["text"] for s in segments),
@@ -357,10 +393,14 @@ def file_events(tmp_dir, input_path, language, max_seconds, name):
         return
 
     chunks = speech_chunks(audio)
-    segments, detected, batch_size, repaired = [], language, 0, 0
+    segments, detected, batch_size, repaired, key = [], language, 0, 0, MAIN
     if chunks:
+        # the language is detected on the first chunk of speech
+        first = chunks[0]
+        key, language = model_for(
+            language, audio[int(first["start"] * SAMPLING_RATE):int(first["end"] * SAMPLING_RATE)], vad_filter=False)
         yield event(stage="recognizing", progress=0)
-        with using_model() as whisper:
+        with using_model(key) as whisper:
             for batch_size in batch_sizes():
                 try:
                     segments = []
@@ -386,8 +426,8 @@ def file_events(tmp_dir, input_path, language, max_seconds, name):
             yield event(stage="checking")
             segments, repaired = repair(whisper, audio, chunks, segments, detected)
 
-    log.info("Transcribed file %s (%s, %.0f s of audio, %d chunks, batch %d, %d repaired) in %.1f s",
-             name, detected, duration, len(chunks), batch_size, repaired, time.monotonic() - started)
+    log.info("Transcribed file %s (%s, %s, %.0f s of audio, %d chunks, batch %d, %d repaired) in %.1f s",
+             name, detected, model_label(key), duration, len(chunks), batch_size, repaired, time.monotonic() - started)
     yield event(result={
         "text": " ".join(s["text"] for s in segments if s["text"]),
         "language": detected,
@@ -509,8 +549,7 @@ def repair(whisper, audio, chunks, segments, language):
         chunk = chunks[i]
         piece = audio[int(chunk["start"] * SAMPLING_RATE):int(chunk["end"] * SAMPLING_RATE)]
         again, _ = whisper.transcribe(piece, language=language, task="transcribe", beam_size=BEAM_SIZE,
-                                      temperature=0.0, vad_filter=True,
-                                      vad_parameters=dict(min_silence_duration_ms=700),
+                                      temperature=0.0, vad_filter=True, vad_parameters=VOICE_VAD,
                                       condition_on_previous_text=False, word_timestamps=True)
         again = [segment(s, chunk["start"]) for s in again]
         if sum(words(s["text"]) for s in again) > counts[i]:
