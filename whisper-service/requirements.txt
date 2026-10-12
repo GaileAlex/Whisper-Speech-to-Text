@@ -3,5 +3,7 @@ ctranslate2==4.8.2
 # PyAV 19 removed the argument metadata_errors of av.open() that faster-whisper 1.2.1 passes:
 # keep 18.x until a faster-whisper release supports 19
 av==18.1.0
+# the model of a language is fetched from a folder of its repository (snapshot_download), not by faster-whisper
+huggingface_hub==1.33.0
 flask==3.1.3
 gunicorn==26.2.0

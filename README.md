@@ -4,7 +4,8 @@ Speech recognition for [gaile.ee](https://gaile.ee/) (project [CV](https://githu
 messages of the chat, their fluency analysis and the audio files of the speech-to-text page (up to hours long).
 An audio file goes in, the text with timestamps comes out.
 Runs on the GPU of the host with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) and the Whisper
-`large-v3` model.
+`large-v3` model; Estonian goes to a Whisper fine-tuned for Estonian by TalTech
+([whisper-large-v3-turbo-et-verbatim-2604](https://huggingface.co/TalTechNLP/whisper-large-v3-turbo-et-verbatim-2604)).
 
 ## 🏗 Architecture
 
@@ -16,10 +17,14 @@ cv-app ──► cv-whisper-app (Spring Boot, :8389) ──► cv-whisper (Pytho
   tag (`et-EE` → `et`), passes the file on and the errors of the Python service back (the progress of a long file
   as a stream); metrics and the traceId of CV.
 - **cv-whisper** (`whisper-service/`) - Flask + gunicorn: ffmpeg converts the input (audio containers only) to 16 kHz
-  mono WAV, faster-whisper transcribes it, Silero VAD finds the intervals of speech. The model is loaded on the first
-  request (or ahead of it by `/warmup`) and unloaded after 30 minutes without requests (the GPU memory is free for
-  the other services in between). The requests run in parallel on the one model: CTranslate2 takes their work batch
-  by batch, so a voice message waits a couple of seconds behind a long file, not the whole file.
+  mono WAV, faster-whisper transcribes it, Silero VAD finds the intervals of speech. A model is loaded on its first
+  request (the main one also ahead of it by `/warmup`) and unloaded after 30 minutes without requests (the GPU memory
+  is free for the other services in between). The requests run in parallel on a model: CTranslate2 takes their work
+  batch by batch, so a voice message waits a couple of seconds behind a long file, not the whole file.
+- Estonian (`et`, given or detected by `large-v3`) is decoded by the TalTech model: on FLEURS (2026-10-12) 5.7% of
+  words wrong instead of 18.2% (`large-v3` splits compound words and garbles endings), 3.5 times faster. It writes
+  numbers as words ("kahe tuhande üheteistkümnendal") and its English is worse, so the other languages stay on
+  `large-v3`.
 - A long file is cut into 30 s chunks of speech decoded in batches (6 times faster than the sequential decoding of
   a voice message); chunks that lost a sentence are found by the word timestamps and decoded again the sequential way.
 
@@ -28,7 +33,7 @@ cv-app ──► cv-whisper-app (Spring Boot, :8389) ──► cv-whisper (Pytho
 - **Java 25** with **Spring Boot 4.1** - Spring MVC on virtual threads, RestClient (JDK HttpClient), Actuator,
   Micrometer Tracing
 - **Python 3.12** - faster-whisper 1.2 (CTranslate2 4.8), Flask, gunicorn
-- **NVIDIA CUDA 12.9 + cuDNN 9**, model `large-v3` in `float16`
+- **NVIDIA CUDA 12.9 + cuDNN 9**, models `large-v3` and the Estonian `large-v3-turbo` of TalTech in `float16`
 - **ffmpeg** - decoding of the audio formats
 - **Docker Compose** - both services on the network `kokoro-net` of CV
 
@@ -37,8 +42,9 @@ cv-app ──► cv-whisper-app (Spring Boot, :8389) ──► cv-whisper (Pytho
 - **NVIDIA GPU** (Blackwell needs CUDA 12.8+) and a driver for CUDA 12.9; Docker with GPU support
   (Docker Desktop on WSL 2 or the NVIDIA Container Toolkit)
 - The Docker network `kokoro-net`: CV creates it, so CV goes up first (or `docker network create kokoro-net`)
-- About 4 GB of GPU memory while the model is loaded, 3-4 GB more while a long file is decoded in a batch of 8
-  (the batch is smaller when less is free); 3 GB of disk for the model in the Hugging Face cache
+- About 4 GB of GPU memory while the main model is loaded, 2 GB more while the Estonian one is, 3-4 GB more while a
+  long file is decoded in a batch of 8 (the batch is smaller when less is free); 4.6 GB of disk for the models in the
+  Hugging Face cache
 
 Development: **Java 25**; Maven comes with the wrapper (`mvnw`).
 
@@ -50,8 +56,14 @@ docker compose up -d --build
 
 - `cv-whisper-app` is published on `127.0.0.1:8389`, `cv-whisper` on `127.0.0.1:5001` (only the host itself; CV
   reaches them over `kokoro-net`).
-- `docker-compose.yml` mounts the Hugging Face cache of the host so that the model (~3 GB) is downloaded only once:
-  `C:/Users/Alex/.cache/huggingface`, or `HF_CACHE` in `.env` on another host.
+- `docker-compose.yml` mounts the Hugging Face cache of the host so that the models (~3 GB and 1.6 GB) are
+  downloaded only once: `C:/Users/Alex/.cache/huggingface`, or `HF_CACHE` in `.env` on another host. A missing model
+  is downloaded by the first request that needs it, which then waits minutes: on a new host fetch the Estonian one
+  ahead (the revision of `LANGUAGE_MODELS` in `whisper_api.py`):
+
+  ```bash
+  docker compose run --rm whisper python -c "from huggingface_hub import snapshot_download; snapshot_download('TalTechNLP/whisper-large-v3-turbo-et-verbatim-2604', revision='310c550922fc1d1bebf3fad41f9b33ede6652bdc', allow_patterns=['ct2/*'])"
+  ```
 - The volume `cuda-cache` keeps the CUDA kernels compiled for the GPU: without it the first request after a new
   container takes ~25 s longer.
 - The first request after a start or an idle half hour loads the model (several seconds).
@@ -131,8 +143,9 @@ line, `{"error", "reason"}`. Closing the connection stops the work.
 
 ### `POST /warmup`
 
-Starts loading the model and answers at once: `{"loaded": true}` when it is loaded already. CV calls it when the
-microphone is pressed, so the recording does not wait for the load (15-25 s).
+Starts loading the main model and answers at once: `{"loaded": true}` when it is loaded already. CV calls it when
+the microphone is pressed, so the recording does not wait for the load (15-25 s). The Estonian model is loaded by
+the first Estonian recording.
 
 ## 📝 Configuration
 
@@ -140,11 +153,11 @@ microphone is pressed, so the recording does not wait for the load (15-25 s).
 
 | Variable                | Default        | Description                                                     |
 |-------------------------|----------------|-----------------------------------------------------------------|
-| `WHISPER_MODEL`         | `large-v3`     | model name or path for faster-whisper                           |
+| `WHISPER_MODEL`         | `large-v3`     | the main model (every language but Estonian, the detection): name or path for faster-whisper |
 | `WHISPER_DEVICE`        | `cuda`         | `cuda` or `cpu`                                                 |
 | `WHISPER_COMPUTE_TYPE`  | `float16`      | CTranslate2 compute type (`int8_float16`: 20% slower, 1.7 GB less GPU memory) |
 | `WHISPER_BEAM_SIZE`     | `5`            | 1 = greedy (faster), 5 = beam search (fewer errors in noise)    |
-| `WHISPER_IDLE_TIMEOUT`  | `1800`         | seconds without requests before the model is unloaded           |
+| `WHISPER_IDLE_TIMEOUT`  | `1800`         | seconds without requests before a model is unloaded             |
 | `WHISPER_MAX_FILE_SECONDS` | `14400`     | the longest audio of `/transcribe-file`                         |
 
 Spring Boot (`src/main/resources/application.properties`):
@@ -163,8 +176,8 @@ Collected by the project [observability](https://github.com/GaileAlex/observabil
   network only), with the histogram of the transcription times;
 - `[traceId-spanId]` in the log lines of cv-whisper-app: the traceId of the request of CV (`traceparent` header),
   so one search finds a voice message in the logs of both projects; nothing is exported;
-- the Python service logs one line per transcription: file, language, length of the audio, time; for a long file
-  also the chunks, the batch and the repaired chunks.
+- the Python service logs one line per transcription: file, language, model, length of the audio, time; for a long
+  file also the chunks, the batch and the repaired chunks.
 
 ## 🧪 Testing
 
