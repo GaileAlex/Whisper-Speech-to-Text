@@ -44,7 +44,7 @@ cv-app ──► cv-whisper-app (Spring Boot, :8389) ──► cv-whisper (Pytho
 - The Docker network `kokoro-net`: CV creates it, so CV goes up first (or `docker network create kokoro-net`)
 - About 4 GB of GPU memory while the main model is loaded, 2 GB more while the Estonian one is, 3-4 GB more while a
   long file is decoded in a batch of 8 (the batch is smaller when less is free); 4.6 GB of disk for the models in the
-  Hugging Face cache
+  volume `hf-cache`
 
 Development: **Java 25**; Maven comes with the wrapper (`mvnw`).
 
@@ -56,17 +56,20 @@ docker compose up -d --build
 
 - `cv-whisper-app` is published on `127.0.0.1:8389`, `cv-whisper` on `127.0.0.1:5001` (only the host itself; CV
   reaches them over `kokoro-net`).
-- `docker-compose.yml` mounts the Hugging Face cache of the host so that the models (~3 GB and 1.6 GB) are
-  downloaded only once: `C:/Users/Alex/.cache/huggingface`, or `HF_CACHE` in `.env` on another host. A missing model
-  is downloaded by the first request that needs it, which then waits minutes: on a new host fetch the Estonian one
-  ahead (the revision of `LANGUAGE_MODELS` in `whisper_api.py`):
+- The models (~3 GB and 1.6 GB) are kept in the volume `hf-cache` (the Hugging Face cache), so a new container or
+  image downloads nothing. Each model is pinned to a revision (`MAIN_MODEL`, `LANGUAGE_MODELS` in `whisper_api.py`):
+  a model is downloaded only when the volume does not have it, a new model or a new revision set there, and its load
+  asks the Hub nothing. A missing model is downloaded by the first request that needs it, which then waits minutes:
+  on a new host or after a new revision fetch them ahead:
 
   ```bash
-  docker compose run --rm whisper python -c "from huggingface_hub import snapshot_download; snapshot_download('TalTechNLP/whisper-large-v3-turbo-et-verbatim-2604', revision='310c550922fc1d1bebf3fad41f9b33ede6652bdc', allow_patterns=['ct2/*'])"
+  docker compose run --rm whisper python -c "import whisper_api as w; w.model_path(w.MAIN); [w.model_path(k) for k in w.LANGUAGE_MODELS]"
   ```
+- Not a folder of the host: through the folder of Windows (9p of Docker Desktop) the main model took 14 s to read,
+  from the volume 2 s.
 - The volume `cuda-cache` keeps the CUDA kernels compiled for the GPU: without it the first request after a new
   container takes ~25 s longer.
-- The first request after a start or an idle half hour loads the model (several seconds).
+- The first request after a start or an idle half hour loads the model (1-2 s).
 
 ### Development
 
@@ -144,7 +147,7 @@ line, `{"error", "reason"}`. Closing the connection stops the work.
 ### `POST /warmup`
 
 Starts loading the main model and answers at once: `{"loaded": true}` when it is loaded already. CV calls it when
-the microphone is pressed, so the recording does not wait for the load (15-25 s). The Estonian model is loaded by
+the microphone is pressed, so the recording does not wait for the load (1-2 s). The Estonian model is loaded by
 the first Estonian recording.
 
 ## 📝 Configuration
@@ -153,7 +156,6 @@ the first Estonian recording.
 
 | Variable                | Default        | Description                                                     |
 |-------------------------|----------------|-----------------------------------------------------------------|
-| `WHISPER_MODEL`         | `large-v3`     | the main model (every language but Estonian, the detection): name or path for faster-whisper |
 | `WHISPER_DEVICE`        | `cuda`         | `cuda` or `cpu`                                                 |
 | `WHISPER_COMPUTE_TYPE`  | `float16`      | CTranslate2 compute type (`int8_float16`: 20% slower, 1.7 GB less GPU memory) |
 | `WHISPER_BEAM_SIZE`     | `5`            | 1 = greedy (faster), 5 = beam search (fewer errors in noise)    |
