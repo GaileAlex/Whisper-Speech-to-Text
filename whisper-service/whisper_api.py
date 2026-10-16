@@ -19,14 +19,17 @@ from flask import Flask, Response, jsonify, request
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
 
-# the main model: every language without a model of its own, and the detection of the language
-MODEL_NAME = os.getenv("WHISPER_MODEL", "large-v3")
+# The models: (repository of the Hugging Face Hub, revision, folder of the CTranslate2 model in it or None). Pinned to a
+# revision: a model is downloaded only when the cache does not have it (a new model or a new revision set here), and
+# a load asks the Hub nothing (faster-whisper asks it at every load of a model given by its name).
+# The main model: every language without a model of its own, and the detection of the language
 MAIN = "main"
-# Languages with a model of their own: (repository, revision, folder of the CTranslate2 model). Estonian: large-v3-turbo
-# fine-tuned by TalTech on 1400 h of verbatim Estonian transcripts. Measured on 2026-10-12 with the options of
-# /transcribe (FLEURS et test): 5.7% WER instead of 18.2% on the phrases without numbers (large-v3 splits compound
-# words and garbles endings), 3.5 times faster, 2 GB of VRAM instead of 3.6. It writes numbers as words ("kahe tuhande
-# üheteistkümnendal") and its English is worse than large-v3's, so only Estonian goes to it
+MAIN_MODEL = ("Systran/faster-whisper-large-v3", "edaa852ec7e145841d8ffdb056a99866b5f0a478", None)
+# Languages with a model of their own. Estonian: large-v3-turbo fine-tuned by TalTech on 1400 h of verbatim Estonian
+# transcripts. Measured on 2026-10-12 with the options of /transcribe (FLEURS et test): 5.7% WER instead of 18.2% on
+# the phrases without numbers (large-v3 splits compound words and garbles endings), 3.5 times faster, 2 GB of VRAM
+# instead of 3.6. It writes numbers as words ("kahe tuhande üheteistkümnendal") and its English is worse than
+# large-v3's, so only Estonian goes to it
 LANGUAGE_MODELS = {
     "et": ("TalTechNLP/whisper-large-v3-turbo-et-verbatim-2604", "310c550922fc1d1bebf3fad41f9b33ede6652bdc", "ct2"),
 }
@@ -102,28 +105,31 @@ warming_up = False
 lock = threading.Lock()
 
 
+def model_entry(key):
+    return MAIN_MODEL if key == MAIN else LANGUAGE_MODELS[key]
+
+
 def model_label(key):
-    return MODEL_NAME if key == MAIN else LANGUAGE_MODELS[key][0].split("/")[-1]
+    return model_entry(key)[0].split("/")[-1]
 
 
-def language_model_path(language):
-    """The folder of the model of a language in the Hugging Face cache, downloaded on the first use."""
-    repo, revision, folder = LANGUAGE_MODELS[language]
-    files = [f"{folder}/*"]
+def model_path(key):
+    """The folder of a model in the Hugging Face cache, downloaded on its first use."""
+    repo, revision, folder = model_entry(key)
+    files = [f"{folder}/*"] if folder else None
     try:
         path = snapshot_download(repo, revision=revision, allow_patterns=files, local_files_only=True)
     except LocalEntryNotFoundError:
         log.info("Downloading model %s...", repo)
         path = snapshot_download(repo, revision=revision, allow_patterns=files)
-    return os.path.join(path, folder)
+    return os.path.join(path, folder) if folder else path
 
 
 def get_model(key=MAIN):
     """Under the lock."""
     if key not in models:
         log.info("Loading model %s (%s, %s)...", model_label(key), DEVICE, COMPUTE_TYPE)
-        path = MODEL_NAME if key == MAIN else language_model_path(key)
-        models[key] = WhisperModel(path, device=DEVICE, compute_type=COMPUTE_TYPE)
+        models[key] = WhisperModel(model_path(key), device=DEVICE, compute_type=COMPUTE_TYPE)
         last_used[key] = time.monotonic()
         log.info("Model loaded")
     return models[key]
@@ -190,7 +196,7 @@ def speech_intervals(audio):
 
 @app.post("/warmup")
 def warmup():
-    """Loads the main model ahead of a recording (the user pressed the microphone): the load takes 15-25 s.
+    """Loads the main model ahead of a recording (the user pressed the microphone): the load takes 1-2 s.
     Answers at once; the idle unload goes on as before, counting from now."""
     global warming_up
     # the lock is held for the whole load: a warm-up during a load (its own or a transcription's) does not wait for it

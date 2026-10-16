@@ -23,13 +23,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY whisper_api.py .
 
 # Uploaded media is parsed by ffmpeg, so don't run as root.
-# The model cache lives in ~/.cache/huggingface, the CUDA kernel cache in ~/.nv (both mounted in docker-compose.yml).
-# ~/.nv is created here so that the named volume mounted over it is owned by whisper, not root; ~/.cache too, or
+# The model cache lives in ~/.cache/huggingface, the CUDA kernel cache in ~/.nv (both volumes of docker-compose.yml).
+# They are created here so that a new volume mounted over them is owned by whisper, not root; ~/.cache too, or
 # Docker creates it for the mount as root and onnxruntime (VAD) cannot keep its files there.
 # The user ubuntu of the base image is removed so that whisper keeps uid 1000, the owner of the volumes created with
 # the former Ubuntu 22.04 image.
 RUN userdel --remove ubuntu && useradd --create-home --uid 1000 whisper && \
-    install -d -o whisper -g whisper /home/whisper/.nv /home/whisper/.cache
+    install -d -o whisper -g whisper /home/whisper/.nv /home/whisper/.cache /home/whisper/.cache/huggingface
 USER whisper
 
 EXPOSE 5001
