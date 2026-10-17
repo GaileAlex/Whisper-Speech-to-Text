@@ -162,11 +162,20 @@ class WhisperControllerTest {
 
     @Test
     void warmup_answersWhetherTheModelIsLoaded() throws Exception {
-        given(whisperService.warmup()).willReturn(Map.of("loaded", false));
+        given(whisperService.warmup(null)).willReturn(Map.of("loaded", false));
 
         mockMvc.perform(post("/warmup"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.loaded").value(false));
+    }
+
+    @Test
+    void warmup_passesTheLanguageOfTheSpeechToCome() throws Exception {
+        given(whisperService.warmup("et-EE")).willReturn(Map.of("loaded", true));
+
+        mockMvc.perform(post("/warmup").param("language", "et-EE"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.loaded").value(true));
     }
 
     private static MockClientHttpResponse answer(HttpStatus status, MediaType type, String body) {

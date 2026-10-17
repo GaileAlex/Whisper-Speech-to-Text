@@ -196,29 +196,32 @@ def speech_intervals(audio):
 
 @app.post("/warmup")
 def warmup():
-    """Loads the main model ahead of a recording (the user pressed the microphone): the load takes 1-2 s.
-    Answers at once; the idle unload goes on as before, counting from now."""
+    """Loads a model ahead of a recording (the user pressed the microphone): the load takes 1-2 s.
+    Query: language (optional) - the speech to come; a language with a model of its own loads that one, any other
+    the main model. Answers at once; the idle unload goes on as before, counting from now."""
     global warming_up
+    language = request.args.get("language")
+    key = language if language in LANGUAGE_MODELS else MAIN
     # the lock is held for the whole load: a warm-up during a load (its own or a transcription's) does not wait for it
     if warming_up or not lock.acquire(timeout=1):
         return jsonify({"loaded": False})
     try:
-        loaded = MAIN in models
+        loaded = key in models
         if loaded:
-            last_used[MAIN] = time.monotonic()
+            last_used[key] = time.monotonic()
         else:
             warming_up = True
-            threading.Thread(target=load_ahead, daemon=True).start()
+            threading.Thread(target=load_ahead, args=(key,), daemon=True).start()
     finally:
         lock.release()
     return jsonify({"loaded": loaded})
 
 
-def load_ahead():
+def load_ahead(key):
     global warming_up
     try:
         with lock:
-            get_model()
+            get_model(key)
     except Exception:
         log.exception("Warm-up failed")
     finally:
