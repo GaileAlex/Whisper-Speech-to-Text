@@ -15,6 +15,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -91,11 +92,15 @@ public class WhisperService {
     /**
      * Starts loading the model if it is not loaded.
      *
+     * @param language the BCP 47 tag of the speech to come (et-EE loads the Estonian model), null: the main model
      * @return {"loaded": true} when the model is already loaded
      */
-    public Map<String, Object> warmup() {
+    public Map<String, Object> warmup(String language) {
+        String whisperLanguage = toWhisperLanguage(language);
         return whisperClient.post()
-                .uri("/warmup")
+                .uri(uri -> uri.path("/warmup")
+                        .queryParamIfPresent("language", Optional.ofNullable(whisperLanguage))
+                        .build())
                 .retrieve()
                 .body(new ParameterizedTypeReference<>() {
                 });

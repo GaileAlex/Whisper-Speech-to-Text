@@ -105,7 +105,16 @@ class WhisperServiceTest {
                 .andExpect(method(HttpMethod.POST))
                 .andRespond(withSuccess("{\"loaded\": false}", MediaType.APPLICATION_JSON));
 
-        assertThat(service.warmup()).containsEntry("loaded", false);
+        assertThat(service.warmup(null)).containsEntry("loaded", false);
+    }
+
+    @Test
+    void warmup_passesTheLanguageAsWhisperNamesIt() {
+        whisper.expect(requestTo("http://whisper/warmup?language=et"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"loaded\": true}", MediaType.APPLICATION_JSON));
+
+        assertThat(service.warmup("et-EE")).containsEntry("loaded", true);
     }
 
     @ParameterizedTest

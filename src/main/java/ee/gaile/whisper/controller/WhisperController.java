@@ -82,10 +82,12 @@ public class WhisperController {
 
     /**
      * Loads the model ahead of a recording; answers at once.
+     *
+     * @param language the language of the speech to come, e.g. et-EE: Estonian has a model of its own
      */
     @PostMapping("/warmup")
-    public Map<String, Object> warmup() {
-        return whisperService.warmup();
+    public Map<String, Object> warmup(@RequestParam(value = "language", required = false) String language) {
+        return whisperService.warmup(language);
     }
 
     /**
