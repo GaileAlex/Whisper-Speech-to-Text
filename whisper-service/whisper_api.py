@@ -1,4 +1,5 @@
 import bisect
+import ctypes
 import gc
 import json
 import logging
@@ -104,6 +105,13 @@ warming_up = False
 # the whole file (measured: 2.7-3.4 s instead of 1.7 s for 10 s of speech)
 lock = threading.Lock()
 
+# A load reads the whole model file into memory (large-v3 2.9 GB, the Estonian model 1.5 GB) and frees it once the model
+# is on the GPU. glibc keeps what a thread frees in the arena of that thread, and the loads run in different request
+# threads: every one kept a copy of the file, the process grew by 2.9 GB a load up to 15.6 GB of its 16 GB limit
+# (2026-10-11) and held 7.7 GB with no model loaded. malloc_trim gives the free memory of all arenas back to the system:
+# 8 loads and unloads in 4 threads stay at 0.8 GB instead of 6.4 GB (the Estonian model, measured 2026-10-20)
+libc = ctypes.CDLL("libc.so.6")
+
 
 def model_entry(key):
     return MAIN_MODEL if key == MAIN else LANGUAGE_MODELS[key]
@@ -130,6 +138,8 @@ def get_model(key=MAIN):
     if key not in models:
         log.info("Loading model %s (%s, %s)...", model_label(key), DEVICE, COMPUTE_TYPE)
         models[key] = WhisperModel(model_path(key), device=DEVICE, compute_type=COMPUTE_TYPE)
+        # the file read for the load is freed: see libc
+        libc.malloc_trim(0)
         last_used[key] = time.monotonic()
         log.info("Model loaded")
     return models[key]
@@ -138,6 +148,7 @@ def get_model(key=MAIN):
 def unload_model(key):
     del models[key]
     gc.collect()
+    libc.malloc_trim(0)
     log.info("Model %s unloaded after %d s of inactivity", model_label(key), IDLE_TIMEOUT)
 
 
