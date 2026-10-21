@@ -3,6 +3,7 @@ import ctypes
 import gc
 import json
 import logging
+import mmap
 import os
 import re
 import shutil
@@ -12,6 +13,7 @@ import tempfile
 import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
 from faster_whisper import BatchedInferencePipeline, WhisperModel, decode_audio
@@ -112,6 +114,16 @@ lock = threading.Lock()
 # 8 loads and unloads in 4 threads stay at 0.8 GB instead of 6.4 GB (the Estonian model, measured 2026-10-20)
 libc = ctypes.CDLL("libc.so.6")
 
+# A load after a while without one took 10-25 s for large-v3 instead of 1-2.5 s. Windows takes away the memory of the
+# WSL VM that nobody touched, even with plenty of its own free (seen: 12.3 -> 8.5 GB of the 68 GB of the VM within
+# 40 idle minutes): the model file stays in the page cache, but every 4 KB page the load touches first - of the file,
+# of the fresh memory for the weights - comes back by a fault of the host, and CTranslate2 loads in one thread.
+# Touched from several threads the pages come back 5-8 times faster (the cached file 4.6 GB/s instead of 0.8, measured
+# 2026-10-20), so the file is first read that way into as much fresh memory: freed at once, that memory is handed out
+# to the load first. It costs ~0.4 s for large-v3 when nothing was taken away
+PREHEAT_THREADS = 8
+PREHEAT_PIECE = 64 << 20
+
 
 def model_entry(key):
     return MAIN_MODEL if key == MAIN else LANGUAGE_MODELS[key]
@@ -133,15 +145,41 @@ def model_path(key):
     return os.path.join(path, folder) if folder else path
 
 
+def preheat(folder):
+    """Reads the model file in parallel pieces into fresh memory and frees it, see PREHEAT_THREADS."""
+    path = os.path.join(folder, "model.bin")
+    size = os.path.getsize(path)
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        # private anonymous memory, like that of the weights
+        memory = mmap.mmap(-1, size, flags=mmap.MAP_PRIVATE)
+        try:
+            with memoryview(memory) as view, ThreadPoolExecutor(PREHEAT_THREADS) as pool:
+                list(pool.map(lambda offset: os.preadv(fd, [view[offset:offset + PREHEAT_PIECE]], offset),
+                              range(0, size, PREHEAT_PIECE)))
+        finally:
+            memory.close()
+    finally:
+        os.close(fd)
+
+
 def get_model(key=MAIN):
     """Under the lock."""
     if key not in models:
         log.info("Loading model %s (%s, %s)...", model_label(key), DEVICE, COMPUTE_TYPE)
-        models[key] = WhisperModel(model_path(key), device=DEVICE, compute_type=COMPUTE_TYPE)
+        path = model_path(key)
+        start = time.monotonic()
+        try:
+            preheat(path)
+        except (OSError, ValueError) as e:
+            # only slower without it
+            log.warning("Preheating %s failed: %s", path, e)
+        preheated = time.monotonic() - start
+        models[key] = WhisperModel(path, device=DEVICE, compute_type=COMPUTE_TYPE)
         # the file read for the load is freed: see libc
         libc.malloc_trim(0)
         last_used[key] = time.monotonic()
-        log.info("Model loaded")
+        log.info("Model loaded in %.1f s (preheating %.1f s)", last_used[key] - start, preheated)
     return models[key]
 
 
@@ -207,7 +245,8 @@ def speech_intervals(audio):
 
 @app.post("/warmup")
 def warmup():
-    """Loads a model ahead of a recording (the user pressed the microphone): the load takes 1-2 s.
+    """Loads a model ahead of a recording (the user pressed the microphone): the load takes 1-2.5 s, longer after
+    a while without one (see PREHEAT_THREADS).
     Query: language (optional) - the speech to come; a language with a model of its own loads that one, any other
     the main model. Answers at once; the idle unload goes on as before, counting from now."""
     global warming_up
