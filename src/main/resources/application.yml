@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: whisper
+  # a request waits for its transcription (minutes) on a virtual thread
+  threads:
+    virtual:
+      enabled: true
+  ###########################################
+  ## MULTIPART (MultipartProperties)
+  ###########################################
+  # Uploads are streamed to a temp file on disk (file-size-threshold defaults to 0). CV sends voice messages
+  # (up to 20 MB) and audio files (up to 150 MB)
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 200MB
+
+server:
+  port: 8389
+
+###########################################
+## MONITORING (project observability)
+###########################################
+# Actuator has its own port, not published: Prometheus scrapes http://cv-whisper-app:8081/actuator/prometheus
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    tags:
+      application: whisper
+    # p95 of the transcriptions in Grafana; a long recording takes minutes
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      maximum-expected-value:
+        http.server.requests: 600s
+  # [traceId-spanId] in the log lines: the traceId of the request of cv-app; no span leaves the application
+  tracing:
+    sampling:
+      probability: 1.0
+
+whisper:
+  url: ${WHISPER_URL:http://cv-whisper:5001}
+  # Max time to wait for a transcription (keep in sync with gunicorn --timeout in whisper-service)
+  timeout: 100m

@@ -162,7 +162,7 @@ the first Estonian recording.
 | `WHISPER_IDLE_TIMEOUT`  | `1800`         | seconds without requests before a model is unloaded             |
 | `WHISPER_MAX_FILE_SECONDS` | `14400`     | the longest audio of `/transcribe-file`                         |
 
-Spring Boot (`src/main/resources/application.properties`):
+Spring Boot (`src/main/resources/application.yml`):
 
 | Property                         | Value                   | Description                                         |
 |----------------------------------|-------------------------|-----------------------------------------------------|
