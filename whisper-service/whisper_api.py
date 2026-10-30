@@ -62,7 +62,7 @@ CONVERT_TIMEOUT = 15 * 60
 
 # Voice messages (/transcribe): the longest audio accepted. A few MB of a low bitrate can hold hours, which decode
 # to gigabytes of samples a request
-MAX_VOICE_SECONDS = int(os.getenv("WHISPER_MAX_VOICE_SECONDS", 2 * 3600))
+MAX_VOICE_SECONDS = int(os.getenv("WHISPER_MAX_VOICE_SECONDS", 3 * 3600))
 # Files (/transcribe-file): the longest audio accepted when the caller sets no lower limit
 MAX_FILE_SECONDS = int(os.getenv("WHISPER_MAX_FILE_SECONDS", 4 * 3600))
 # The speech is cut into chunks of one window of the model and the chunks are decoded in batches. Measured with
