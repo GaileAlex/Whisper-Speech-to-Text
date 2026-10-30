@@ -60,6 +60,9 @@ ALLOWED_FORMATS = "mp3,wav,ogg,flac,mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,aac,am
 INPUT_GUARD = ["-protocol_whitelist", "file", "-format_whitelist", ALLOWED_FORMATS]
 CONVERT_TIMEOUT = 15 * 60
 
+# Voice messages (/transcribe): the longest audio accepted. A few MB of a low bitrate can hold hours, which decode
+# to gigabytes of samples a request
+MAX_VOICE_SECONDS = int(os.getenv("WHISPER_MAX_VOICE_SECONDS", 2 * 3600))
 # Files (/transcribe-file): the longest audio accepted when the caller sets no lower limit
 MAX_FILE_SECONDS = int(os.getenv("WHISPER_MAX_FILE_SECONDS", 4 * 3600))
 # The speech is cut into chunks of one window of the model and the chunks are decoded in batches. Measured with
@@ -297,12 +300,17 @@ def transcribe():
             file.save(input_path)
 
             try:
-                convert_to_wav(input_path, wav_path)
+                # a second over the limit tells a recording that is too long from one that just fits
+                convert_to_wav(input_path, wav_path, MAX_VOICE_SECONDS + 1)
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                 log.warning("ffmpeg failed for %s: %s", file.filename, (e.stderr or "timeout").strip())
                 return jsonify({"error": "cannot decode audio"}), 400
 
             audio = decode_audio(wav_path, sampling_rate=SAMPLING_RATE)
+            if len(audio) / SAMPLING_RATE > MAX_VOICE_SECONDS:
+                log.info("Recording %s refused: longer than %d s", file.filename, MAX_VOICE_SECONDS)
+                return jsonify({"error": "the audio is too long", "reason": "too_long",
+                                "seconds": round(len(audio) / SAMPLING_RATE)}), 413
             key, language = model_for(language, audio, vad_filter=True)
             with using_model(key) as whisper:
                 start = time.monotonic()
@@ -354,8 +362,8 @@ def transcribe_file():
     "decode" (400, not an audio file ffmpeg can read), "video" (415, has a video track), "too_long" (413, with
     "seconds"). Then the answer is a stream of JSON lines (application/x-ndjson):
     {"stage": "converting"}, {"stage": "recognizing", "progress": 0.0-1.0}, {"stage": "checking"} and at the end
-    {"result": {"text", "language", "duration", "segments": [{"start", "end", "text"}]}} or {"error", "reason"};
-    the segments are subtitles (up to CUE_MAX_SECONDS) made of the word timestamps.
+    {"result": {"text", "language", "duration", "segments": [{"start", "end", "text"}]}} or {"error", "reason"}
+    (reason "decode", "too_long", or "internal" for any other failure); the segments are subtitles (up to CUE_MAX_SECONDS) made of the word timestamps.
     Closing the connection stops the work after the batch being decoded.
     """
     file = request.files.get("file")
@@ -424,13 +432,17 @@ def event(**fields):
 
 
 def cancellable(events, name):
-    """The lines of file_events; the client closing the connection (a cancelled job) ends them at the next line."""
+    """The lines of file_events; the client closing the connection (a cancelled job) ends them at the next line.
+    A failure after the stream has started comes as its last line: the status 200 has gone out already."""
     started = time.monotonic()
     try:
         yield from events
     except GeneratorExit:
         log.info("File %s: the client went away after %.1f s, stopped", name, time.monotonic() - started)
         raise
+    except Exception as e:
+        log.exception("Transcription failed for file %s", name)
+        yield event(error=str(e), reason="internal")
 
 
 def file_events(tmp_dir, input_path, language, max_seconds, name):

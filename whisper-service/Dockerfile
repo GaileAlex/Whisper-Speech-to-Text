@@ -34,5 +34,6 @@ USER whisper
 
 EXPOSE 5001
 
-# One process holds the model; its threads transcribe in parallel (a file being decoded keeps one of them busy)
-CMD ["gunicorn", "-w", "1", "--threads", "4", "--timeout", "6000", "--graceful-timeout", "600", "-b", "0.0.0.0:5001", "whisper_api:app"]
+# One process holds the model; its threads transcribe in parallel. A file being decoded keeps one of them busy for
+# the whole stream: 8, so that a few long files leave threads to the voice messages
+CMD ["gunicorn", "-w", "1", "--threads", "8", "--timeout", "6000", "--graceful-timeout", "600", "-b", "0.0.0.0:5001", "whisper_api:app"]

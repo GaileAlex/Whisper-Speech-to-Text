@@ -120,6 +120,7 @@ Errors come as `{"error": "..."}`:
 | Status | When                                                         |
 |--------|--------------------------------------------------------------|
 | 400    | ffmpeg cannot decode the file                                |
+| 413    | longer than 2 hours (`reason` `too_long`, with `seconds`)    |
 | 500    | the transcription failed                                     |
 | 502    | the Python service is not reachable                          |
 | 504    | no answer within `whisper.timeout` (100 minutes)             |
@@ -142,7 +143,7 @@ A long audio file (`multipart/form-data`, field `file`). A file that cannot be t
 ```
 
 `segments` are subtitles of up to 6 s made of the word timestamps. An error after the start comes as the last
-line, `{"error", "reason"}`. Closing the connection stops the work.
+line, `{"error", "reason"}`: `decode`, `too_long`, or `internal` for any other failure. Closing the connection stops the work.
 
 ### `POST /warmup`
 
@@ -160,6 +161,7 @@ the first Estonian recording.
 | `WHISPER_COMPUTE_TYPE`  | `float16`      | CTranslate2 compute type (`int8_float16`: 20% slower, 1.7 GB less GPU memory) |
 | `WHISPER_BEAM_SIZE`     | `5`            | 1 = greedy (faster), 5 = beam search (fewer errors in noise)    |
 | `WHISPER_IDLE_TIMEOUT`  | `1800`         | seconds without requests before a model is unloaded             |
+| `WHISPER_MAX_VOICE_SECONDS` | `7200`     | the longest audio of `/transcribe`                              |
 | `WHISPER_MAX_FILE_SECONDS` | `14400`     | the longest audio of `/transcribe-file`                         |
 
 Spring Boot (`src/main/resources/application.yml`):
