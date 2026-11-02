@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -127,6 +128,17 @@ libc = ctypes.CDLL("libc.so.6")
 PREHEAT_THREADS = 8
 PREHEAT_PIECE = 64 << 20
 
+# Room before a load. Next to a video job ComfyUI fills the VRAM, and a model loaded then was slow or did not fit.
+# cv-imagegen-app holds the GPU on this ask (POST /api/gpu/hold): the running prompt waits and gives VRAM back until
+# ROOM_MB is free (2026-11-02: 3.6 -> 7.6 GB free within a second during a Wan job). Empty URL = no ask
+GPU_HOLD_URL = os.getenv("GPU_HOLD_URL", "")
+# the VRAM of a loaded model (float16, measured 2026-10-12: large-v3 3.6 GB, the Estonian model 2.0 GB) plus a batch
+ROOM_MB = {MAIN: 4608, "et": 3072}
+# how long a load waits for the room before it goes on anyway
+ROOM_WAIT = 5.0
+# the hold covers the load and the recognition after it; cv-app renews it while the speech goes on
+ROOM_HOLD_SECONDS = 30
+
 
 def model_entry(key):
     return MAIN_MODEL if key == MAIN else LANGUAGE_MODELS[key]
@@ -178,12 +190,48 @@ def get_model(key=MAIN):
             # only slower without it
             log.warning("Preheating %s failed: %s", path, e)
         preheated = time.monotonic() - start
+        make_room(key)
         models[key] = WhisperModel(path, device=DEVICE, compute_type=COMPUTE_TYPE)
         # the file read for the load is freed: see libc
         libc.malloc_trim(0)
         last_used[key] = time.monotonic()
         log.info("Model loaded in %.1f s (preheating %.1f s)", last_used[key] - start, preheated)
     return models[key]
+
+
+def free_vram_mb():
+    """The VRAM free on the card (nvidia-smi counts every process); None when it cannot be read."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=10).stdout
+        return int(out.strip().splitlines()[0])
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+def make_room(key):
+    """Asks cv-imagegen-app for the VRAM of the model and waits until it is free or ROOM_WAIT is over. A failure only
+    means the load goes on as before."""
+    if not GPU_HOLD_URL or DEVICE != "cuda":
+        return
+    need = ROOM_MB.get(key, ROOM_MB[MAIN])
+    free = free_vram_mb()
+    if free is not None and free >= need:
+        return
+    started = time.monotonic()
+    try:
+        ask = urllib.request.Request(GPU_HOLD_URL, method="POST", headers={"Content-Type": "application/json"},
+                                     data=json.dumps({"seconds": ROOM_HOLD_SECONDS, "roomMb": need}).encode())
+        with urllib.request.urlopen(ask, timeout=3) as answer:
+            answer.read()
+    except OSError as e:
+        log.warning("No room asked for %s: %s", model_label(key), e)
+        return
+    while (free is None or free < need) and time.monotonic() - started < ROOM_WAIT:
+        time.sleep(0.2)
+        free = free_vram_mb()
+    log.info("Room for %s: %s MB free of %d MB asked, %.1f s", model_label(key), free, need,
+             time.monotonic() - started)
 
 
 def unload_model(key):
@@ -562,13 +610,11 @@ def speech_chunks(audio):
 def batch_sizes():
     """The batch the free VRAM allows, then 1 as the fallback when the GPU runs out of memory anyway."""
     size = 4
-    try:
-        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
-                             capture_output=True, text=True, timeout=10).stdout
-        free = int(out.strip().splitlines()[0])
-        size = next((batch for batch, needed in BATCH_FREE_VRAM_MB if free >= needed), 1)
-    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+    free = free_vram_mb()
+    if free is None:
         log.warning("Cannot read the free GPU memory: batch %d", size)
+    else:
+        size = next((batch for batch, needed in BATCH_FREE_VRAM_MB if free >= needed), 1)
     return [size] if size == 1 else [size, 1]
 
 
