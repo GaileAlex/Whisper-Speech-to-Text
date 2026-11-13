@@ -32,7 +32,7 @@ cv-app ──► cv-whisper-app (Spring Boot, :8389) ──► cv-whisper (Pytho
 
 - **Java 25** with **Spring Boot 4.1** - Spring MVC on virtual threads, RestClient (JDK HttpClient), Actuator,
   Micrometer Tracing
-- **Python 3.12** - faster-whisper 1.2 (CTranslate2 4.8), Flask, gunicorn
+- **Python 3.12** - faster-whisper 1.2 (CTranslate2 4.9), Flask, gunicorn
 - **NVIDIA CUDA 12.9 + cuDNN 9**, models `large-v3` and the Estonian `large-v3-turbo` of TalTech in `float16`
 - **ffmpeg** - decoding of the audio formats
 - **Docker Compose** - both services on the network `kokoro-net` of CV
